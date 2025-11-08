@@ -20,7 +20,8 @@
     "productName": "Shadownloader Client",
     "win": {
       "target": [
-        "nsis"
+        "nsis",
+        "portable"
       ],
       "icon": "src/img/shadownloader.ico"
     },

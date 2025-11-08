@@ -22,8 +22,10 @@ function getIconPath() {
     return path.join(__dirname, 'img', iconName);
 }
 
+let mainWindow;
+
 function createWindow() {
-    const win = new BrowserWindow({
+    mainWindow = new BrowserWindow({
         width: 500,
         height: 850,
         resizable: false,
@@ -36,7 +38,7 @@ function createWindow() {
         icon: getIconPath()
     });
 
-    win.loadFile(path.join(__dirname, 'index.html'));
+    mainWindow.loadFile(path.join(__dirname, 'index.html'));
     // win.webContents.openDevTools();
 }
 
@@ -117,7 +119,7 @@ function createCreditsWindow() {
     const creditsWindow = new BrowserWindow({
         width: 875,
         height: 500,
-        parent: BrowserWindow.getFocusedWindow(),
+        parent: mainWindow,
         modal: true,
         resizable: false,
         minimizable: false,
