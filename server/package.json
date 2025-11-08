@@ -1,0 +1,31 @@
+{
+  "name": "shadownloader-server",
+  "version": "1.0.0",
+  "description": "Shadownloader is an ephemeral self-hosted file sharing system that prioritises anonymity and data privacy. Upload a file, and the it disappears the moment it is downloaded by someone else.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "files",
+    "sharing",
+    "data",
+    "privacy",
+    "anonymous",
+    "utility",
+    "tool",
+    "self-hosted"
+  ],
+  "author": "Diamond Digital Development <https://diamonddigital.dev>",
+  "license": "AGPL-3.0-only",
+  "dependencies": {
+    "content-disposition": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.2.1",
+    "file-system-db": "^2.1.0",
+    "helmet": "^8.1.0",
+    "multer": "^2.0.2",
+    "uuid": "^13.0.0"
+  }
+}

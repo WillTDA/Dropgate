@@ -1,0 +1,129 @@
+html {
+    user-select: none;
+}
+
+body {
+    background-color: #212529;
+}
+
+#drop-zone {
+    border: 2px dashed #495057;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+}
+
+#drop-zone.drag-over {
+    background-color: #343a40;
+    border-color: #6c757d;
+}
+
+#upload-btn {
+    transition: background-color 0.3s;
+}
+
+.container {
+    max-width: 500px;
+}
+
+[data-bs-toggle="tooltip"] {
+    cursor: help;
+}
+
+.help-icon {
+    vertical-align: sub;
+    font-size: 1.25rem !important;
+    color: #adb5bd;
+}
+
+/* Preferences/Credits Page Styles */
+body.popup-window {
+    background-color: #282828;
+    color: #ffffff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    padding: 20px;
+}
+
+.popup-window h1 {
+    font-size: 24px;
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.popup-window label {
+    display: block;
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+
+.popup-window select {
+    width: 100%;
+    padding: 10px;
+    font-size: 16px;
+    background-color: #4a4a4a;
+    color: #ffffff;
+    border: none;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    transition: background-color 0.3s;
+}
+
+.popup-window select:hover {
+    background-color: #5a5a5a;
+}
+
+.popup-window select:focus {
+    outline: none;
+    background-color: #5a5a5a;
+}
+
+.popup-window .btn {
+    display: block;
+    width: 100%;
+    padding: 10px;
+    margin-top: 20px;
+    font-size: 16px;
+    background-color: #4a4a4a;
+    color: #ffffff;
+    border: none;
+    border-radius: 5px;
+    transition: background-color 0.3s;
+    text-align: center;
+    cursor: pointer;
+}
+
+.popup-window .btn:hover {
+    background-color: #5a5a5a;
+}
+
+.popup-window .btn:focus {
+    outline: none;
+    background-color: #5a5a5a;
+}
+
+.popup-window hr {
+    margin: 20px 0;
+    border: none;
+    border-top: 1px solid #535353;
+}
+
+.popup-window span {
+    color: #c796ff;
+    text-decoration: none;
+    transition: all 0.3s;
+}
+
+.popup-window span:hover {
+    color: #a75aff;
+    text-decoration: underline;
+}
+
+#credits-logo {
+    margin: 0;
+    width: 24px;
+    height: 24px;
+    pointer-events: none;
+    vertical-align: middle;
+    margin-top: 5px;
+    margin-right: 10px;
+}
