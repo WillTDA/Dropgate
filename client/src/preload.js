@@ -9,6 +9,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     uploadProgress: (progressData) => ipcRenderer.send('upload-progress', progressData),
     onUpdateUI: (callback) => ipcRenderer.on('update-ui', (_event, data) => callback(data)),
     uploadFinished: (result) => ipcRenderer.send('upload-finished', result),
-    readFileFromPath: (filePath) => ipcRenderer.invoke('read-file-from-path', filePath),
     rendererReady: () => ipcRenderer.send('renderer-ready')
 });

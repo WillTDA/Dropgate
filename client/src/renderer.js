@@ -26,6 +26,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         let selectedFile = null;
         const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
 
+        function isFile(file) {
+            return new Promise((resolve) => {
+                // A simple check for the presence of a file type can often identify files.
+                // Directories will have an empty string as their type.
+                if (file.type !== '') {
+                    return resolve(true);
+                }
+
+                // For files without a type, we can use FileReader.
+                // Reading a directory will result in an error.
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    if (reader.error) {
+                        resolve(false);
+                    } else {
+                        resolve(true);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
         // --- Initial Settings Load ---
         const settings = await window.electronAPI.getSettings();
         serverUrlInput.value = settings.serverURL || '';
@@ -64,11 +86,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             e.stopPropagation();
             dropZone.classList.remove('drag-over');
         });
-        dropZone.addEventListener('drop', (e) => {
+        dropZone.addEventListener('drop', async (e) => {
             e.preventDefault();
             e.stopPropagation();
             dropZone.classList.remove('drag-over');
-            handleFile(e.dataTransfer.files[0]);
+
+            const files = e.dataTransfer.files;
+            if (!files || files.length === 0) return;
+
+            const droppedFile = files[0];
+
+            // Check if the dropped item is a file
+            const isValidFile = await isFile(droppedFile);
+
+            if (isValidFile) {
+                handleFile(droppedFile);
+            } else {
+                uploadStatus.textContent = 'Folders cannot be uploaded.';
+                uploadStatus.className = 'form-text mt-1 text-warning';
+                selectedFile = null;
+                fileNameDisplay.textContent = '';
+                fileInput.value = '';
+                uploadBtn.disabled = true;
+            }
         });
 
         testConnectionBtn.addEventListener('click', async () => {
@@ -189,12 +229,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         function handleFile(file) {
-            if (file) {
-                selectedFile = file;
-                fileNameDisplay.textContent = file.name;
-                uploadBtn.disabled = false;
-                linkSection.style.display = 'none';
+            // Clear any previous error messages
+            uploadStatus.textContent = '';
+
+            if (!file) {
+                selectedFile = null;
+                fileNameDisplay.textContent = '';
+                fileInput.value = '';
+                uploadBtn.disabled = true;
+                return;
             }
+
+            if (file.size === 0) {
+                uploadStatus.textContent = 'Error: Cannot upload empty (0 byte) files.';
+                uploadStatus.className = 'form-text mt-1 text-danger';
+                selectedFile = null;
+                fileNameDisplay.textContent = '';
+                fileInput.value = '';
+                uploadBtn.disabled = true;
+                return;
+            }
+
+            selectedFile = file;
+            fileNameDisplay.textContent = file.name;
+            uploadBtn.disabled = false;
+            linkSection.style.display = 'none';
         }
 
         // Trigger for uploads started from the UI

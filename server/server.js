@@ -223,6 +223,21 @@ app.post('/upload/complete', (req, res) => {
     const fileId = uuidv4();
     const finalPath = path.join(uploadDir, fileId);
 
+    try {
+        const stats = fs.statSync(uploadInfo.tempFilePath);
+        if (stats.size === 0) {
+            log('warn', `Rejected 0-byte file upload for ID: ${uploadId}`);
+            fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the empty temp file
+            ongoingUploads.delete(uploadId);
+            return res.status(400).json({ error: 'Empty files (0 bytes) cannot be uploaded.' });
+        }
+    } catch (e) {
+        log('error', `Could not stat temp file for size check: ${e.message}`);
+        ongoingUploads.delete(uploadId);
+        fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Attempt to clean up
+        return res.status(500).json({ error: 'Server error during file validation.' });
+    }
+
     fs.renameSync(uploadInfo.tempFilePath, finalPath);
 
     const expiresAt = uploadInfo.lifetime > 0 ? Date.now() + uploadInfo.lifetime : null;

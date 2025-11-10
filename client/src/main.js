@@ -238,16 +238,6 @@ app.on('will-quit', () => {
     globalShortcut.unregisterAll();
 });
 
-ipcMain.handle('read-file-from-path', async (event, filePath) => {
-    try {
-        const data = fs.readFileSync(filePath);
-        return { success: true, data };
-    } catch (error) {
-        console.error('Failed to read file for renderer:', error);
-        return { success: false, error: error.message };
-    }
-});
-
 ipcMain.on('upload-progress', (event, progressData) => {
     // Send to main window if it exists
     if (mainWindow && !mainWindow.isDestroyed()) {
