@@ -59,16 +59,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // --- Event Listeners ---
-        serverUrlInput.addEventListener('input', saveSettings);
-        fileLifetimeValueInput.addEventListener('input', saveSettings);
+        fileLifetimeValueInput.addEventListener('blur', () => {
+            if (fileLifetimeUnitSelect.value !== 'unlimited') {
+                const value = parseFloat(fileLifetimeValueInput.value);
+                if (isNaN(value) || value <= 0) {
+                    fileLifetimeValueInput.value = 0.5;
+                }
+            }
+            saveSettings();
+        });
+
         fileLifetimeUnitSelect.addEventListener('change', () => {
             if (fileLifetimeUnitSelect.value === 'unlimited') {
                 fileLifetimeValueInput.disabled = true;
                 fileLifetimeValueInput.value = 0;
             } else {
                 fileLifetimeValueInput.disabled = false;
-                if (parseInt(fileLifetimeValueInput.value, 10) === 0) {
-                    fileLifetimeValueInput.value = 1;
+                const value = parseFloat(fileLifetimeValueInput.value);
+                if (isNaN(value) || value <= 0) {
+                    fileLifetimeValueInput.value = 0.5;
                 }
             }
             saveSettings();
@@ -402,7 +411,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         function getLifetimeInMs() {
             const unit = fileLifetimeUnitSelect.value;
-            const value = parseInt(fileLifetimeValueInput.value, 10) || 0;
+            const value = parseFloat(fileLifetimeValueInput.value, 10) || 0;
             if (unit === 'unlimited' || value === 0) return 0;
             const multipliers = {
                 minutes: 60 * 1000,
