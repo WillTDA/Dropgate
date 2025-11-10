@@ -1,0 +1,16 @@
+name: Build and Publish Shadownloader Server to Docker Hub
+on:
+  [workflow_dispatch]
+
+jobs:
+  publish_image:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Build Image
+      run: docker build -t ./server/ -t willtda/shadownloader-server:latest
+    - name: Push Image to Docker Hub
+      run: |
+        docker push willtda/shadownloader-server:latest
