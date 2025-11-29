@@ -127,6 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 connectionStatus.className = 'form-text mt-1 text-warning';
                 return;
             }
+            uploadStatus.textContent = '';
             testConnectionBtn.disabled = true;
             testConnectionBtn.textContent = 'Testing...';
             connectionStatus.textContent = 'Pinging server...';
@@ -446,6 +447,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         async function checkServerCompatibility() {
+            uploadStatus.textContent = '';
             const serverUrl = await cleanServerUrl(serverUrlInput.value.trim());
             if (!serverUrl) return;
 

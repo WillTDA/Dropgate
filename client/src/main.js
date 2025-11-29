@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, globalShortcut, dialog, clipboard, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, globalShortcut, dialog, clipboard, Notification, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const Store = require('electron-store').default;
@@ -324,8 +324,20 @@ ipcMain.handle('set-settings', (event, settings) => {
     }
 });
 
-ipcMain.handle('get-app-version', () => {
+ipcMain.handle('get-client-version', () => {
     return app.getVersion();
+});
+
+ipcMain.on('open-external', (event, url) => {
+    const allowed = [
+        'https://github.com/',
+        'https://youtube.com/',
+        'https://buymeacoff.ee/'
+    ];
+
+    if (allowed.some(prefix => url.startsWith(prefix))) {
+        shell.openExternal(url);
+    }
 });
 
 const menuTemplate = [

@@ -4,10 +4,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSettings: () => ipcRenderer.invoke('get-settings'),
     setSettings: (settings) => ipcRenderer.invoke('set-settings', settings),
     onFileOpened: (callback) => ipcRenderer.on('file-opened', (_event, file) => callback(file)),
-    getClientVersion: () => ipcRenderer.invoke('get-app-version'),
+    getClientVersion: () => ipcRenderer.invoke('get-client-version'),
     onBackgroundUploadStart: (callback) => ipcRenderer.on('background-upload-start', (_event, details) => callback(details)),
     uploadProgress: (progressData) => ipcRenderer.send('upload-progress', progressData),
     onUpdateUI: (callback) => ipcRenderer.on('update-ui', (_event, data) => callback(data)),
     uploadFinished: (result) => ipcRenderer.send('upload-finished', result),
-    rendererReady: () => ipcRenderer.send('renderer-ready')
+    rendererReady: () => ipcRenderer.send('renderer-ready'),
+    openExternal: (url) => ipcRenderer.send('open-external', url)
 });
