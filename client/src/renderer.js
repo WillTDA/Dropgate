@@ -25,7 +25,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         let selectedFile = null;
         const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
-        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
         function isFile(file) {
             return new Promise((resolve) => {
