@@ -231,7 +231,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serverUrlInput.value = settings.serverURL;
 
                 console.log('Starting upload...');
-                // Trigger the centralized upload function
+                // Trigger the centralised upload function
                 await performUpload();
             } else {
                 console.error('Invalid details received:', details);
@@ -282,59 +282,51 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             if (fileLifetimeUnitSelect.value !== 'unlimited') {
                 const value = parseFloat(fileLifetimeValueInput.value);
-                if (isNaN(value) || value <= 0) {
-                    fileLifetimeValueInput.value = 0.5;
-                }
+                if (isNaN(value) || value <= 0) fileLifetimeValueInput.value = 0.5;
             }
 
             if (!selectedFile) {
-                window.electronAPI.uploadFinished({ status: 'error', error: 'File is missing or cannot be read.' });
+                window.electronAPI.uploadFinished({ status: 'error', error: 'File is missing.' });
                 return;
             }
 
             const cleanUrl = await cleanServerUrl(serverUrlInput.value);
             const useEncryption = encryptCheckbox.checked;
 
-            try {
-                const response = await fetch(cleanUrl, { signal: AbortSignal.timeout(5000) });
-                const data = await response.json();
-                const fileLimit = data.sizeLimit || 0;
-                if (fileLimit > 0 && selectedFile.size > (fileLimit * 1024 * 1024)) {
-                    const errorMsg = `File size (${(selectedFile.size / 1024 / 1024).toFixed(2)} MB) exceeds server limit of ${fileLimit} MB.`;
-                    window.electronAPI.uploadFinished({ status: 'error', error: errorMsg });
-                    return;
-                }
-            } catch (error) {
-                window.electronAPI.uploadFinished({ status: 'error', error: 'Could not retrieve server info. Upload aborted.' });
-                return;
-            }
-
             let keyB64 = null;
             let cryptoKey = null;
             let encryptedFilename = selectedFile.name;
 
+            // 1. Calculate Size with Overhead
+            const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
+            let totalUploadSize = selectedFile.size;
+
             if (useEncryption) {
+                // AES-GCM adds 16 bytes tag + 12 bytes IV = 28 bytes per chunk
+                const overhead = totalChunks * 28;
+                totalUploadSize += overhead;
+
                 window.electronAPI.uploadProgress({ text: 'Generating encryption key...' });
                 try {
                     cryptoKey = await generateKey();
                     keyB64 = await exportKey(cryptoKey);
                     const filenameBuffer = new TextEncoder().encode(selectedFile.name);
                     const encryptedFilenameBlob = await encryptData(filenameBuffer, cryptoKey);
-
                     const reader = new FileReader();
-                    encryptedFilename = await new Promise((resolve, reject) => {
+                    encryptedFilename = await new Promise((resolve) => {
                         reader.onload = () => resolve(reader.result.split(',')[1]);
-                        reader.onerror = reject;
                         reader.readAsDataURL(encryptedFilenameBlob);
                     });
                 } catch (err) {
-                    window.electronAPI.uploadFinished({ status: 'error', error: 'Failed to prepare file for encryption.' });
+                    window.electronAPI.uploadFinished({ status: 'error', error: 'Failed to prepare encryption.' });
                     return;
                 }
             }
 
             try {
-                window.electronAPI.uploadProgress({ text: 'Initialising upload...' });
+                window.electronAPI.uploadProgress({ text: 'Reserving server storage...' });
+
+                // 2. Init with Total Size and Chunks
                 const initResponse = await fetch(`${cleanUrl}/upload/init`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -342,35 +334,75 @@ document.addEventListener('DOMContentLoaded', async () => {
                         filename: encryptedFilename,
                         lifetime: getLifetimeInMs(),
                         isEncrypted: useEncryption,
+                        totalSize: totalUploadSize,
+                        totalChunks: totalChunks
                     }),
                 });
 
                 if (!initResponse.ok) {
-                    const errorData = await initResponse.json().catch(() => ({ error: 'Server returned an invalid response.' }));
-                    throw new Error(`Server failed to initialise upload. Status: ${initResponse.status}. ${errorData.error}`);
+                    const errorData = await initResponse.json().catch(() => ({}));
+                    throw new Error(errorData.error || `Server initialisation failed: ${initResponse.status}`);
                 }
 
                 const { uploadId } = await initResponse.json();
-                await uploadChunks(uploadId, cleanUrl, cryptoKey);
+
+                // 3. Upload Loop
+                for (let i = 0; i < totalChunks; i++) {
+                    const start = i * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
+                    let chunkBlob = selectedFile.slice(start, end);
+
+                    const percentComplete = ((i) / totalChunks) * 100;
+                    window.electronAPI.uploadProgress({
+                        text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
+                        percent: percentComplete
+                    });
+
+                    // Encrypt
+                    if (useEncryption) {
+                        const chunkBuffer = await chunkBlob.arrayBuffer();
+                        chunkBlob = await encryptData(chunkBuffer, cryptoKey);
+                    }
+
+                    // Hash the final chunk (encrypted or plain)
+                    const bufferToHash = await chunkBlob.arrayBuffer();
+                    const hashBuffer = await crypto.subtle.digest('SHA-256', bufferToHash);
+                    const hashArray = Array.from(new Uint8Array(hashBuffer));
+                    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+                    // Send with Index and Hash
+                    const headers = {
+                        'Content-Type': 'application/octet-stream',
+                        'X-Upload-ID': uploadId,
+                        'X-Chunk-Index': i.toString(),
+                        'X-Chunk-Hash': hashHex
+                    };
+
+                    const chunkResponse = await attemptChunkUpload(`${cleanUrl}/upload/chunk`, {
+                        method: 'POST',
+                        headers: headers,
+                        body: chunkBlob,
+                    });
+
+                    if (!chunkResponse.ok) throw new Error(`Chunk ${i + 1} failed.`);
+                }
 
                 window.electronAPI.uploadProgress({ text: 'Finalising upload...', percent: 100 });
                 const completeResponse = await fetch(`${cleanUrl}/upload/complete`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ uploadId }),
-                    signal: AbortSignal.timeout(30000)  // 30 second timeout
+                    signal: AbortSignal.timeout(30000)
                 });
 
                 if (!completeResponse.ok) {
                     const errorData = await completeResponse.json().catch(() => ({}));
-                    throw new Error(`Server failed to finalize upload. ${errorData.error || ''}`);
+                    throw new Error(errorData.error || 'Finalisation failed.');
                 }
 
                 const response = await completeResponse.json();
                 let downloadLink = `${cleanUrl}/${response.id}`;
-                if (useEncryption) {
-                    downloadLink += `#${keyB64}`;
-                }
+                if (useEncryption) downloadLink += `#${keyB64}`;
 
                 window.electronAPI.uploadFinished({ status: 'success', link: downloadLink });
             } catch (error) {
@@ -413,42 +445,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return attemptChunkUpload(url, options, retries - 1, backoff * 2, maxRetries);
                 }
                 throw err;
-            }
-        }
-
-        async function uploadChunks(uploadId, serverUrl, cryptoKey) {
-            const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
-            for (let i = 0; i < totalChunks; i++) {
-                const start = i * CHUNK_SIZE;
-                const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
-                let chunk = selectedFile.slice(start, end);
-
-                const percentComplete = ((i + 1) / totalChunks) * 100;
-                window.electronAPI.uploadProgress({
-                    text: `Sending chunk ${i + 1} of ${totalChunks}...`,
-                    percent: percentComplete
-                });
-
-                if (cryptoKey) {
-                    const chunkBuffer = await chunk.arrayBuffer();
-                    chunk = await encryptData(chunkBuffer, cryptoKey);
-                }
-
-                const headers = {
-                    'Content-Type': 'application/octet-stream',
-                    'X-Upload-ID': uploadId,
-                    'X-File-Offset': String(start)
-                };
-
-                const chunkResponse = await attemptChunkUpload(`${serverUrl}/upload/chunk`, {
-                    method: 'POST',
-                    headers: headers,
-                    body: chunk,
-                });
-
-                if (!chunkResponse.ok) {
-                    throw new Error(`Chunk ${i + 1} failed to upload. Status: ${chunkResponse.status}`);
-                }
             }
         }
 
@@ -582,7 +578,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         window.electronAPI.rendererReady();
     } catch (error) {
-        console.error('FATAL ERROR in renderer initialization:', error);
+        console.error('FATAL ERROR in renderer initialisation:', error);
         alert('Fatal error initialising renderer: ' + error.message);
     }
 });

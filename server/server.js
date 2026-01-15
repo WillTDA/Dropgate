@@ -13,7 +13,6 @@ log('info', 'Shadownloader Server is starting...');
 const { version } = require('./package.json');
 const path = require('path');
 const fs = require('fs');
-const { pipeline } = require('stream');
 const crypto = require('crypto');
 const express = require('express');
 const rateLimit = require('express-rate-limit').default;
@@ -53,6 +52,20 @@ const createDirIfNotExists = (dir) => {
     }
 };
 
+const getDirSize = (dirPath) => {
+    let size = 0;
+    if (fs.existsSync(dirPath)) {
+        const files = fs.readdirSync(dirPath);
+        for (const file of files) {
+            const filePath = path.join(dirPath, file);
+            const stats = fs.statSync(filePath);
+            if (stats.isDirectory()) size += getDirSize(filePath);
+            else size += stats.size;
+        }
+    }
+    return size;
+};
+
 const preserveUploads = process.env.PRESERVE_UPLOADS === 'true' || false;
 log('info', `PRESERVE_UPLOADS: ${preserveUploads}`);
 
@@ -69,13 +82,39 @@ if (Number(maxFileSizeMB) === 0) {
     log('warn', 'MAX_FILE_SIZE_MB is set to 0! Files of any size can be uploaded.');
 }
 
-if (!preserveUploads) {
-    log('info', 'Clearing any existing uploads and temp files on startup...');
-    [tmpDir, uploadDir].forEach(cleanupDir);
+let maxStorageGB = process.env.MAX_STORAGE_GB ? process.env.MAX_STORAGE_GB : 0;
+if (isNaN(maxStorageGB) || maxStorageGB < 0) {
+    log('error', 'Invalid MAX_STORAGE_GB environment variable. It must be a non-negative number.');
+    process.exit(1);
 }
+
+maxStorageGB = Number(maxStorageGB);
+const MAX_STORAGE_BYTES = maxStorageGB === 0 ? Infinity : maxStorageGB * 1024 * 1024 * 1024;
+log('info', `MAX_STORAGE_GB: ${maxStorageGB} GB`);
+if (Number(maxStorageGB) === 0) {
+    log('warn', 'MAX_STORAGE_GB is set to 0! Consider setting a limit on total storage used by uploaded files to prevent disk exhaustion.');
+}
+
+if (maxFileSizeMB > (maxStorageGB * 1024) && maxStorageGB !== 0) {
+    log('warn', 'MAX_FILE_SIZE_MB is larger than MAX_STORAGE_GB! Any uploads larger than the allocated storage quota will be rejected.');
+}
+
+if (!preserveUploads) {
+    log('info', 'Clearing any existing uploads on startup...');
+    cleanupDir(uploadDir);
+}
+log('info', 'Clearing any zombie uploads and temp files...');
+cleanupDir(tmpDir);
+
 
 createDirIfNotExists(uploadDir);
 createDirIfNotExists(tmpDir);
+
+let currentDiskUsage = getDirSize(uploadDir);
+setInterval(() => { currentDiskUsage = getDirSize(uploadDir); }, 300000); // Sync every 5 minutes in case of discrepancies
+if (maxStorageGB !== 0) {
+    log('info', `Current disk usage: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB`);
+}
 
 let fileDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'file-database.json')) : new Map();
 let ongoingUploads = new Map();
@@ -113,11 +152,11 @@ app.use(
 const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? process.env.RATE_LIMIT_WINDOW_MS : 60000;
 const rateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS ? process.env.RATE_LIMIT_MAX_REQUESTS : 25;
 if (isNaN(rateLimitWindowMs) || rateLimitWindowMs < 0 || !Number.isInteger(Number(rateLimitWindowMs))) {
-    log('error', 'Invalid RATE_LIMIT_WINDOW_MS environment variable. It must be a positive integer.');
+    log('error', 'Invalid RATE_LIMIT_WINDOW_MS environment variable. It must be a non-negative integer.');
     process.exit(1);
 }
 if (isNaN(rateLimitMaxRequests) || rateLimitMaxRequests < 0 || !Number.isInteger(Number(rateLimitMaxRequests))) {
-    log('error', 'Invalid RATE_LIMIT_MAX_REQUESTS environment variable. It must be a positive integer.');
+    log('error', 'Invalid RATE_LIMIT_MAX_REQUESTS environment variable. It must be a non-negative integer.');
     process.exit(1);
 }
 
@@ -144,7 +183,7 @@ if (Number(rateLimitMaxRequests) > 0 && Number(rateLimitWindowMs) > 0) {
 
 app.post('/upload/init', limiter, (req, res) => {
     const uploadId = uuidv4();
-    const { filename, lifetime, isEncrypted } = req.body;
+    const { filename, lifetime, isEncrypted, totalSize, totalChunks } = req.body;
 
     if (isEncrypted && !enableE2EE) {
         log('warn', 'Rejected an E2EE upload attempt because E2EE is disabled on the server.');
@@ -161,6 +200,32 @@ app.post('/upload/init', limiter, (req, res) => {
         return res.status(400).json({ error: 'Invalid isEncrypted. Must be a boolean.' });
     }
 
+    // Validate file lifetime
+    if (typeof lifetime !== 'number' || !Number.isInteger(lifetime) || lifetime < 0) {
+        return res.status(400).json({ error: 'Invalid lifetime. Must be a non-negative integer (milliseconds).' });
+    }
+
+    // Validate Reservation Data
+    const size = parseInt(totalSize);
+    const chunks = parseInt(totalChunks);
+    if (typeof size !== 'number' || !Number.isInteger(size) || size <= 0) return res.status(400).json({ error: 'Invalid total size. Must be a positive integer.' });
+    if (typeof chunks !== 'number' || !Number.isInteger(chunks) || chunks <= 0) return res.status(400).json({ error: 'Invalid chunk count. Must be a positive integer.' });
+
+    // Check File Limit
+    if (size > MAX_BYTES) {
+        return res.status(413).json({ error: `File exceeds limit of ${maxFileSizeMB} MB.` });
+    }
+
+    // Check Storage Quota
+    // Calculate reserved space from active uploads
+    let reservedSpace = 0;
+    ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
+
+    if ((currentDiskUsage + reservedSpace + size) > MAX_STORAGE_BYTES) {
+        log('warn', `Upload rejected due to insufficient storage. Current usage: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB, Reserved: ${(reservedSpace / 1024 / 1024 / 1024).toFixed(2)} GB, Requested: ${(size / 1024 / 1024 / 1024).toFixed(2)} GB.`);
+        return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
+    }
+
     // Validate filename if not encrypted
     if (!isEncrypted) {
         if (filename.length > 255 || /[\/\\]/.test(filename)) {
@@ -168,61 +233,73 @@ app.post('/upload/init', limiter, (req, res) => {
         }
     }
 
-    // Validate file lifetime
-    if (typeof lifetime !== 'number' || !Number.isInteger(lifetime) || lifetime < 0) {
-        return res.status(400).json({ error: 'Invalid lifetime. Must be a non-negative integer (milliseconds).' });
-    }
-
     const tempFilePath = path.join(tmpDir, uploadId);
-
     fs.writeFileSync(tempFilePath, '');
 
     ongoingUploads.set(uploadId, {
         filename,
         isEncrypted,
-        lifetime: lifetime,
+        lifetime: Number(lifetime) || 0,
         tempFilePath,
+        totalSize: size, // Expected final size
+        totalChunks: chunks, // Expected chunk count
+        receivedChunks: new Set(),
+        reservedBytes: size, // Amount to reserve
+        expiresAt: Date.now() + (2 * 60 * 1000) // 2 minute initial deadline
     });
 
-    log('info', `Initialised upload.`);
+    log('info', `Initialised upload. Reserved ${(size / 1024 / 1024).toFixed(2)} MB.`);
     res.status(200).json({ uploadId });
 });
 
 app.post('/upload/chunk', (req, res) => {
     const uploadId = req.headers['x-upload-id'];
-    const offsetHeader = req.headers['x-file-offset'];
-    if (!ongoingUploads.has(uploadId)) return res.status(400).send('Invalid upload ID.');
+    const chunkIndex = parseInt(req.headers['x-chunk-index']);
+    const clientHash = req.headers['x-chunk-hash'];
 
-    // Validate offset
-    const offset = parseInt(offsetHeader || '0', 10);
-    if (isNaN(offset) || offset < 0) {
-        return res.status(400).send('Invalid file offset.');
+    if (!ongoingUploads.has(uploadId)) return res.status(410).send('Upload session expired or invalid.');
+    const session = ongoingUploads.get(uploadId);
+
+    // Validate Index
+    if (isNaN(chunkIndex) || chunkIndex < 0 || chunkIndex >= session.totalChunks) {
+        return res.status(400).send('Invalid chunk index.');
     }
 
-    const { tempFilePath } = ongoingUploads.get(uploadId);
-    const writeStream = fs.createWriteStream(tempFilePath, { 
-        flags: 'r+', 
-        start: offset 
-    });
+    if (session.receivedChunks.has(chunkIndex)) return res.status(200).send('Chunk already received.');
 
-    pipeline(req, writeStream, (err) => {
-        if (err) {
-            log('error', `Upload chunk pipeline error for ${uploadId}: ${err.message}`);
-            // If the connection drops here, the client will catch the error and retry sending the exact same chunk to the exact same offset.
-            return res.status(500).send('Write failed.');
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        log('info', `Received chunk ${chunkIndex + 1}/${session.totalChunks} for: ${uploadId}. Size: ${(buffer.length / 1024).toFixed(2)} KB`);
+
+        // 1. Verify Size (5MB + Overhead limit)
+        if (buffer.length > (5 * 1024 * 1024) + 1024) return res.status(413).send('Chunk too large.');
+
+        // 2. Verify Integrity
+        if (clientHash) {
+            const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
+            if (serverHash !== clientHash) return res.status(400).send('Integrity check failed.');
         }
-        try {
-            const size = fs.statSync(tempFilePath).size;
-            if (size > MAX_BYTES) {
-                fs.rmSync(tempFilePath, { force: true });
-                ongoingUploads.delete(uploadId);
-                return res.status(413).send('File too large.');
-            }
-            return res.status(200).send('Chunk received.');
-        } catch (e) {
-            log('error', `Stat failed for ${tempFilePath}: ${e.message}`);
-            return res.status(500).send('Server error');
-        }
+
+        // Calculate Offset
+        // If encrypted, every chunk (except last) is 5MB + 28 bytes. If plain, 5MB.
+        const CHUNK_BASE = 5 * 1024 * 1024;
+        const OVERHEAD = session.isEncrypted ? 28 : 0;
+        const OFFSET = chunkIndex * (CHUNK_BASE + OVERHEAD);
+
+        // Write
+        fs.open(session.tempFilePath, 'r+', (err, fd) => {
+            if (err) return res.status(500).send('File IO error.');
+            fs.write(fd, buffer, 0, buffer.length, OFFSET, (writeErr) => {
+                fs.close(fd, () => { });
+                if (writeErr) return res.status(500).send('Write failed.');
+
+                session.receivedChunks.add(chunkIndex);
+                session.expiresAt = Date.now() + (2 * 60 * 1000); // Reset timeout to 2 mins
+                res.status(200).send('Chunk received.');
+            });
+        });
     });
 });
 
@@ -252,6 +329,9 @@ app.post('/upload/complete', (req, res) => {
 
     fs.renameSync(uploadInfo.tempFilePath, finalPath);
 
+    const stats = fs.statSync(finalPath); // Get final size
+    currentDiskUsage += stats.size; // Update global usage
+
     const expiresAt = uploadInfo.lifetime > 0 ? Date.now() + uploadInfo.lifetime : null;
 
     fileDatabase.set(fileId, {
@@ -261,8 +341,8 @@ app.post('/upload/complete', (req, res) => {
         isEncrypted: uploadInfo.isEncrypted,
     });
 
-    ongoingUploads.delete(uploadId);
-    log('info', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.`);
+    ongoingUploads.delete(uploadId); // Remove the reservation
+    log('info', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
     res.status(200).json({ id: fileId });
 });
 
@@ -301,13 +381,17 @@ app.get('/:fileId', limiter, (req, res) => {
     } else {
         res.setHeader('Content-Disposition', contentDisposition(fileInfo.name));
         res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Length', fs.statSync(fileInfo.path).size);
+
+        const fileSize = fs.statSync(fileInfo.path).size;
+        res.setHeader('Content-Length', fileSize);
+
         const readStream = fs.createReadStream(fileInfo.path);
         readStream.pipe(res);
         readStream.on('close', () => {
+            currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
             fs.rm(fileInfo.path, { force: true }, () => { });
             fileDatabase.delete(fileId);
-            log('info', `[Simple] File downloaded and deleted.`);
+            log('info', `[Simple] File downloaded and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
         });
     }
 });
@@ -330,13 +414,20 @@ app.get('/api/file/:fileId', limiter, (req, res) => {
         return res.status(404).json({ error: 'File not found.' });
     }
 
+    // Capture size before streaming
+    const fileSize = fs.statSync(fileInfo.path).size;
+    res.setHeader('Content-Length', fileSize);
+    
     const readStream = fs.createReadStream(fileInfo.path);
-    res.setHeader('Content-Length', fs.statSync(fileInfo.path).size);
     readStream.pipe(res);
+    
     readStream.on('close', () => {
+        // Update storage immediately
+        currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
+
         fs.rm(fileInfo.path, { force: true }, () => { });
         fileDatabase.delete(fileId);
-        log('info', `[Encrypted] File data sent and deleted.`);
+        log('info', `[Encrypted] File data sent and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
     });
 });
 
@@ -345,26 +436,30 @@ app.get('/', (req, res) => {
 });
 
 const cleanupExpiredFiles = () => {
-    log('info', 'Running TTL cleanup job...');
     const now = Date.now();
     const allFiles = preserveUploads ? fileDatabase.getAll() : Array.from(fileDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
     for (const record of allFiles) {
         if (record.value?.expiresAt && record.value.expiresAt < now) {
             log('info', `File expired. Deleting...`);
-            fs.rm(record.value.path, { force: true }, () => { });
+            try {
+                const stats = fs.statSync(record.value.path);
+                currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+                fs.rmSync(record.value.path, { force: true });
+            } catch (e) { }
             fileDatabase.delete(record.key);
         }
     }
 };
 
 const cleanupZombieUploads = () => {
-    log('info', 'Running zombie upload cleanup job...');
-    const tempFiles = fs.readdirSync(tmpDir);
-    for (const tempFile of tempFiles) {
-        const tempFilePath = path.join(tmpDir, tempFile);
-        if (!ongoingUploads.has(tempFile)) {
-            log('info', `Found zombie upload temp file. Deleting...`);
-            fs.rmSync(tempFilePath, { force: true });
+    const now = Date.now();
+    for (const [id, session] of ongoingUploads.entries()) {
+        if (now > session.expiresAt) {
+            log('info', `Cleaning zombie upload: ${id}`);
+            try {
+                fs.rmSync(session.tempFilePath, { force: true });
+            } catch (e) { }
+            ongoingUploads.delete(id); // Removes reservation automatically
         }
     }
 };
@@ -373,7 +468,7 @@ setInterval(cleanupExpiredFiles, 60000);
 
 const zombieCleanupIntervalMs = process.env.ZOMBIE_CLEANUP_INTERVAL_MS ? process.env.ZOMBIE_CLEANUP_INTERVAL_MS : 300000;
 if (isNaN(zombieCleanupIntervalMs) || zombieCleanupIntervalMs < 0 || !Number.isInteger(Number(zombieCleanupIntervalMs))) {
-    log('error', 'Invalid ZOMBIE_CLEANUP_INTERVAL_MS environment variable. It must be a positive integer.');
+    log('error', 'Invalid ZOMBIE_CLEANUP_INTERVAL_MS environment variable. It must be a non-negative integer.');
     process.exit(1);
 }
 
