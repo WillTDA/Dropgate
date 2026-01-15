@@ -490,7 +490,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         async function checkServerCompatibility() {
             uploadStatus.textContent = '';
             const serverUrl = await cleanServerUrl(serverUrlInput.value.trim());
-            if (!serverUrl) return { compatible: false, message: '' };
+            if (!serverUrl) return { compatible: false, message: 'No server URL provided.' };
 
             try {
                 const clientVersion = await window.electronAPI.getClientVersion();
