@@ -489,7 +489,7 @@ app.get('/api/file/:fileId', limiter, (req, res) => {
     });
 });
 
-app.get('/', (req, res) => {
+app.get('/api/info', limiter, (req, res) => {
     res.status(200).json({
         name: serverName,
         version: version,
@@ -507,6 +507,10 @@ app.get('/', (req, res) => {
             // }
         }
     });
+});
+
+app.get('/', limiter, (req, res) => {
+    res.send("Shadownloader Server is running.");
 });
 
 const cleanupExpiredFiles = () => {

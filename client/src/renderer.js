@@ -1,3 +1,5 @@
+import { ShadownloaderClient, lifetimeToMs } from './shadownloader-core.js';
+
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -25,7 +27,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         let serverCapabilities = null;
         let selectedFile = null;
-        const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
+        /** @type {{compatible:boolean, message?:string}} */
+        let lastServerCheck = { compatible: false, message: '' };
+
+        // --- Core client (shared logic for Electron + Web UI) ---
+        const clientVersion = await window.electronAPI.getClientVersion();
+        const coreClient = new ShadownloaderClient({
+            clientVersion,
+            logger: (level, message, meta) => {
+                // Keep logs useful, but not spammy.
+                if (level === 'debug') return;
+                const fn = console[level] || console.log;
+                fn.call(console, `[core] ${message}`, meta ?? '');
+            }
+        });
 
         function isFile(file) {
             return new Promise((resolve) => {
@@ -52,12 +67,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         // --- Initial Settings Load ---
         const settings = await window.electronAPI.getSettings();
         serverUrlInput.value = settings.serverURL || '';
-        await checkServerCompatibility();
+
         fileLifetimeValueInput.value = settings.lifetimeValue || 24;
         fileLifetimeUnitSelect.value = settings.lifetimeUnit || 'hours';
         if (fileLifetimeUnitSelect.value === 'unlimited') {
             fileLifetimeValueInput.disabled = true;
+            fileLifetimeValueInput.value = 0;
         }
+
+        await checkServerCompatibility();
 
         // --- Event Listeners ---
         fileLifetimeValueInput.addEventListener('blur', () => {
@@ -130,26 +148,26 @@ document.addEventListener('DOMContentLoaded', async () => {
                 connectionStatus.className = 'form-text mt-1 text-warning';
                 return;
             }
+
             uploadStatus.textContent = '';
             testConnectionBtn.disabled = true;
             testConnectionBtn.textContent = 'Testing...';
-            connectionStatus.textContent = 'Pinging server...';
+            connectionStatus.textContent = 'Checking server...';
             connectionStatus.className = 'form-text mt-1 text-muted';
-            const cleanUrl = await cleanServerUrl(serverUrl);
+
             try {
-                const response = await fetch(cleanUrl, { method: 'GET', signal: AbortSignal.timeout(5000) });
-                if (response.ok) {
-                    if (cleanUrl.startsWith('https://')) {
-                        connectionStatus.textContent = 'Connection successful (HTTPS).';
-                        connectionStatus.className = 'form-text mt-1 text-success';
-                    } else {
-                        connectionStatus.textContent = 'Connection successful (HTTP) — connection is insecure.';
-                        connectionStatus.className = 'form-text mt-1 text-warning';
-                    }
+                const { cleanUrl } = await coreClient.getServerInfo(serverUrl, { timeoutMs: 5000 });
+
+                const schemeOk = cleanUrl.startsWith('https://');
+
+                if (schemeOk) {
+                    connectionStatus.textContent = `Connection successful (HTTPS).`;
+                    connectionStatus.className = 'form-text mt-1 text-success';
                 } else {
-                    connectionStatus.textContent = `Failed. Server responded with status: ${response.status}`;
-                    connectionStatus.className = 'form-text mt-1 text-danger';
+                    connectionStatus.textContent = `Connection successful (HTTP) — connection is insecure.`;
+                    connectionStatus.className = 'form-text mt-1 text-warning';
                 }
+
                 await checkServerCompatibility();
             } catch (error) {
                 connectionStatus.textContent = 'Connection failed. Check URL or if server is running.';
@@ -171,34 +189,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.electronAPI.onUpdateUI((event) => {
             switch (event.type) {
                 case 'progress':
-                    const { text, percent } = event.data;
-                    if (text) {
-                        uploadStatus.textContent = text;
-                        uploadStatus.className = 'form-text mt-1 text-muted';
+                    {
+                        const { text, percent } = event.data;
+                        if (text) {
+                            uploadStatus.textContent = text;
+                            uploadStatus.className = 'form-text mt-1 text-muted';
+                        }
+                        if (percent !== undefined) {
+                            progressBar.style.width = percent.toFixed(2) + '%';
+                            progressBar.setAttribute('aria-valuenow', percent.toFixed(2));
+                            progressBar.textContent = percent.toFixed(0) + '%';
+                        }
+                        uploadBtn.disabled = true;
+                        uploadBtn.textContent = 'Uploading...';
+                        linkSection.style.display = 'none';
+                        break;
                     }
-                    if (percent !== undefined) {
-                        progressBar.style.width = percent.toFixed(2) + '%';
-                        progressBar.setAttribute('aria-valuenow', percent.toFixed(2));
-                        progressBar.textContent = percent.toFixed(0) + '%';
-                    }
-                    uploadBtn.disabled = true;
-                    uploadBtn.textContent = 'Uploading...';
-                    linkSection.style.display = 'none';
-                    break;
                 case 'success':
-                    const { link } = event.data;
-                    downloadLinkInput.value = link;
-                    linkSection.style.display = 'block';
-                    uploadStatus.textContent = 'Upload successful!';
-                    uploadStatus.className = 'form-text mt-1 text-success';
-                    resetUI();
-                    break;
+                    {
+                        const { link } = event.data;
+                        downloadLinkInput.value = link;
+                        linkSection.style.display = 'block';
+                        uploadStatus.textContent = 'Upload successful!';
+                        uploadStatus.className = 'form-text mt-1 text-success';
+                        resetUI();
+                        break;
+                    }
                 case 'error':
-                    const { error } = event.data;
-                    uploadStatus.textContent = `Upload failed: ${error}`;
-                    uploadStatus.className = 'form-text mt-1 text-danger';
-                    resetUI(false);
-                    break;
+                    {
+                        const { error } = event.data;
+                        uploadStatus.textContent = `Upload failed: ${error}`;
+                        uploadStatus.className = 'form-text mt-1 text-danger';
+                        resetUI(false);
+                        break;
+                    }
             }
         });
 
@@ -265,8 +289,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             selectedFile = file;
             fileNameDisplay.textContent = file.name;
-            uploadBtn.disabled = false;
             linkSection.style.display = 'none';
+
+            // Only enable upload if the last server check was compatible and lifetime is valid
+            uploadBtn.disabled = !lastServerCheck.compatible;
+            validateLifetimeInput();
         }
 
         // Trigger for uploads started from the UI
@@ -293,26 +320,20 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
+            // Double check lifetime against server before starting
+            if (!validateLifetimeInput()) {
+                window.electronAPI.uploadFinished({
+                    status: 'error',
+                    error: uploadStatus.textContent || 'Invalid file lifetime.'
+                });
+                return;
+            }
+
             const useEncryption = encryptCheckbox.checked;
 
-            // Use cached capabilities
-            if (serverCapabilities && serverCapabilities.upload) {
-                const maxMB = serverCapabilities.upload.maxSizeMB;
-                if (maxMB > 0 && selectedFile.size > (maxMB * 1024 * 1024)) {
-                    window.electronAPI.uploadFinished({
-                        status: 'error',
-                        error: `File too large. Server limit: ${maxMB} MB.`
-                    });
-                    return;
-                }
-
-                // Double check lifetime before starting
-                if (!validateLifetimeInput()) {
-                    return;
-                }
-
-                // Double check E2EE support
-                if (useEncryption && (!serverCapabilities.upload.e2ee)) {
+            // UI-side checks (core also validates, but these give instant feedback)
+            if (serverCapabilities?.upload) {
+                if (useEncryption && !serverCapabilities.upload.e2ee) {
                     window.electronAPI.uploadFinished({
                         status: 'error',
                         error: 'Server does not support end-to-end encryption.'
@@ -321,160 +342,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            const cleanUrl = await cleanServerUrl(serverUrlInput.value);
-
-            let keyB64 = null;
-            let cryptoKey = null;
-            let encryptedFilename = selectedFile.name;
-
-            // 1. Calculate Size with Overhead
-            const totalChunks = Math.ceil(selectedFile.size / CHUNK_SIZE);
-            let totalUploadSize = selectedFile.size;
-
-            if (useEncryption) {
-                // AES-GCM adds 16 bytes tag + 12 bytes IV = 28 bytes per chunk
-                const overhead = totalChunks * 28;
-                totalUploadSize += overhead;
-
-                window.electronAPI.uploadProgress({ text: 'Generating encryption key...' });
-                try {
-                    cryptoKey = await generateKey();
-                    keyB64 = await exportKey(cryptoKey);
-                    const filenameBuffer = new TextEncoder().encode(selectedFile.name);
-                    const encryptedFilenameBlob = await encryptData(filenameBuffer, cryptoKey);
-                    const reader = new FileReader();
-                    encryptedFilename = await new Promise((resolve) => {
-                        reader.onload = () => resolve(reader.result.split(',')[1]);
-                        reader.readAsDataURL(encryptedFilenameBlob);
-                    });
-                } catch (err) {
-                    window.electronAPI.uploadFinished({ status: 'error', error: 'Failed to prepare encryption.' });
-                    return;
-                }
-            }
+            const lifetimeMs = getLifetimeInMs();
 
             try {
-                window.electronAPI.uploadProgress({ text: 'Reserving server storage...' });
-
-                // 2. Init with Total Size and Chunks
-                const initResponse = await fetch(`${cleanUrl}/upload/init`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        filename: encryptedFilename,
-                        lifetime: getLifetimeInMs(),
-                        isEncrypted: useEncryption,
-                        totalSize: totalUploadSize,
-                        totalChunks: totalChunks
-                    }),
-                });
-
-                if (!initResponse.ok) {
-                    const errorData = await initResponse.json().catch(() => ({}));
-                    throw new Error(errorData.error || `Server initialisation failed: ${initResponse.status}`);
-                }
-
-                const { uploadId } = await initResponse.json();
-
-                // 3. Upload Loop
-                for (let i = 0; i < totalChunks; i++) {
-                    const start = i * CHUNK_SIZE;
-                    const end = Math.min(start + CHUNK_SIZE, selectedFile.size);
-                    let chunkBlob = selectedFile.slice(start, end);
-
-                    const percentComplete = ((i) / totalChunks) * 100;
-                    window.electronAPI.uploadProgress({
-                        text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
-                        percent: percentComplete
-                    });
-
-                    // Encrypt
-                    if (useEncryption) {
-                        const chunkBuffer = await chunkBlob.arrayBuffer();
-                        chunkBlob = await encryptData(chunkBuffer, cryptoKey);
+                const result = await coreClient.uploadFile({
+                    serverUrl: serverUrlInput.value.trim(),
+                    file: selectedFile,
+                    lifetimeMs,
+                    encrypt: useEncryption,
+                    onProgress: (evt) => {
+                        const payload = {};
+                        if (evt?.text) payload.text = evt.text;
+                        if (evt?.percent !== undefined) payload.percent = evt.percent;
+                        if (Object.keys(payload).length) window.electronAPI.uploadProgress(payload);
                     }
-
-                    // Hash the final chunk (encrypted or plain)
-                    const bufferToHash = await chunkBlob.arrayBuffer();
-                    const hashBuffer = await crypto.subtle.digest('SHA-256', bufferToHash);
-                    const hashArray = Array.from(new Uint8Array(hashBuffer));
-                    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-                    // Send with Index and Hash
-                    const headers = {
-                        'Content-Type': 'application/octet-stream',
-                        'X-Upload-ID': uploadId,
-                        'X-Chunk-Index': i.toString(),
-                        'X-Chunk-Hash': hashHex
-                    };
-
-                    const chunkResponse = await attemptChunkUpload(`${cleanUrl}/upload/chunk`, {
-                        method: 'POST',
-                        headers: headers,
-                        body: chunkBlob,
-                    });
-
-                    if (!chunkResponse.ok) throw new Error(`Chunk ${i + 1} failed.`);
-                }
-
-                window.electronAPI.uploadProgress({ text: 'Finalising upload...', percent: 100 });
-                const completeResponse = await fetch(`${cleanUrl}/upload/complete`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ uploadId }),
-                    signal: AbortSignal.timeout(30000)
                 });
 
-                if (!completeResponse.ok) {
-                    const errorData = await completeResponse.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Finalisation failed.');
-                }
-
-                const response = await completeResponse.json();
-                let downloadLink = `${cleanUrl}/${response.id}`;
-                if (useEncryption) downloadLink += `#${keyB64}`;
-
-                window.electronAPI.uploadFinished({ status: 'success', link: downloadLink });
+                window.electronAPI.uploadFinished({ status: 'success', link: result.downloadUrl });
             } catch (error) {
-                window.electronAPI.uploadFinished({ status: 'error', error: error.message });
-            }
-        }
-
-        async function attemptChunkUpload(url, options, retries = 5, backoff = 1000, maxRetries = 5) {
-            try {
-                const response = await fetch(url, options);
-                if (!response.ok) {
-                    // Throw to trigger the catch block for retry logic
-                    throw new Error(`Error: ${response.status}`);
-                }
-                return response;
-            } catch (err) {
-                // If the error is an AbortError (user cancelled), do not retry.
-                if (err.name === 'AbortError') throw err;
-
-                if (retries > 0) {
-                    console.warn(`Chunk upload failed. Retrying... Error: ${err.message}`);
-                    let remainingTime = backoff;
-                    const updateInterval = 100;
-                    const currentAttempt = maxRetries - retries + 1;
-
-                    while (remainingTime > 0) {
-                        const secondsLeft = (remainingTime / 1000).toFixed(1);
-
-                        window.electronAPI.uploadProgress({
-                            text: `Chunk upload failed. Retrying in ${secondsLeft}s... (${currentAttempt}/${maxRetries})`
-                        });
-
-                        await new Promise(resolve => setTimeout(resolve, updateInterval));
-                        remainingTime -= updateInterval;
-                    }
-
-                    window.electronAPI.uploadProgress({
-                        text: `Chunk upload failed. Retrying now... (${currentAttempt}/${maxRetries})`
-                    });
-                    return attemptChunkUpload(url, options, retries - 1, backoff * 2, maxRetries);
-                }
-                throw err;
+                window.electronAPI.uploadFinished({
+                    status: 'error',
+                    error: error?.message || String(error)
+                });
             }
         }
 
@@ -490,85 +379,79 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         function getLifetimeInMs() {
             const unit = fileLifetimeUnitSelect.value;
-            const value = parseFloat(fileLifetimeValueInput.value, 10) || 0;
-            if (unit === 'unlimited' || value <= 0) return 0;
-            const multipliers = {
-                minutes: 60 * 1000,
-                hours: 60 * 60 * 1000,
-                days: 24 * 60 * 60 * 1000,
-            };
-            return value * (multipliers[unit] || 0);
-        }
-
-        async function cleanServerUrl(url) {
-            if (!url) return;
-            let cleanUrl = url.trim().replace(/\/+$/, '');
-            if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
-                cleanUrl = 'https://' + cleanUrl;
-            }
-
-            try {
-                const response = await fetch(cleanUrl, { method: 'HEAD', signal: AbortSignal.timeout(3000) });
-                if (response.ok) return cleanUrl;
-            } catch (error) {
-                console.warn('HTTPS check failed, falling back to HTTP');
-                return cleanUrl.replace(/^https:\/\//, 'http://');
-            }
-            return cleanUrl;
+            if (unit === 'unlimited') return 0;
+            const value = parseFloat(fileLifetimeValueInput.value);
+            return lifetimeToMs(value, unit);
         }
 
         async function checkServerCompatibility() {
             uploadStatus.textContent = '';
-            const serverUrl = await cleanServerUrl(serverUrlInput.value.trim());
-            if (!serverUrl) return { compatible: false, message: 'No server URL provided.' };
+            const inputUrl = serverUrlInput.value.trim();
+            if (!inputUrl) {
+                const message = 'No server URL provided.';
+                uploadStatus.textContent = message;
+                uploadStatus.className = 'form-text mt-1 text-warning';
+                uploadBtn.disabled = true;
+                lastServerCheck = { compatible: false, message };
+                return lastServerCheck;
+            }
 
             try {
-                const clientVersion = await window.electronAPI.getClientVersion();
-                const response = await fetch(serverUrl, { signal: AbortSignal.timeout(5000) });
-                const serverInfo = await response.json();
+                const { serverInfo } = await coreClient.getServerInfo(inputUrl, { timeoutMs: 5000 });
 
                 if (!serverInfo || !serverInfo?.version || !serverInfo?.capabilities) {
                     const message = 'Error: Cannot determine server version or capabilities.';
                     uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-danger';
-                    return { compatible: false, message };
+                    uploadBtn.disabled = true;
+                    lastServerCheck = { compatible: false, message };
+                    return lastServerCheck;
                 }
 
                 serverCapabilities = serverInfo.capabilities;
                 applyServerLimits();
-                const serverVersion = serverInfo.version;
 
-                const [clientMajor, clientMinor] = clientVersion.split('.').map(Number);
-                const [serverMajor, serverMinor] = serverVersion.split('.').map(Number);
+                const compat = coreClient.checkCompatibility(serverInfo);
 
-                if (clientMajor !== serverMajor) {
+                if (!compat.compatible) {
                     uploadBtn.disabled = true;
-                    const message = `Error: Incompatible versions. Client v${clientVersion}, Server v${serverVersion}.${serverInfo.name ? ` (${serverInfo.name})` : ''}`;
-                    uploadStatus.textContent = message;
+                    uploadStatus.textContent = compat.message;
                     uploadStatus.className = 'form-text mt-1 text-danger';
-                    return { compatible: false, message };
-                } else if (clientMinor > serverMinor) {
-                    const message = `Warning: Client (v${clientVersion}) is newer than Server (v${serverVersion}).${serverInfo.name ? ` (${serverInfo.name})` : ''}`;
-                    uploadStatus.textContent = message;
-                    uploadStatus.className = 'form-text mt-1 text-warning';
-                    return { compatible: true, message };
-                } else {
-                    const message = `Server: v${serverVersion}, Client: v${clientVersion}.${serverInfo.name ? ` (${serverInfo.name})` : ''}`;
-                    uploadStatus.textContent = message;
-                    uploadStatus.className = 'form-text mt-1 text-info';
-                    return { compatible: true, message };
+                    lastServerCheck = { compatible: false, message: compat.message };
+                    return lastServerCheck;
                 }
+
+                // compatible
+                uploadStatus.textContent = compat.message;
+
+                // warning when client is newer
+                if (compat.message.toLowerCase().includes('newer')) {
+                    uploadStatus.className = 'form-text mt-1 text-warning';
+                } else {
+                    uploadStatus.className = 'form-text mt-1 text-info';
+                }
+
+                // Only enable if a file is selected and lifetime is valid
+                lastServerCheck = { compatible: true, message: compat.message };
+                if (selectedFile) {
+                    uploadBtn.disabled = false;
+                    validateLifetimeInput();
+                }
+
+                return lastServerCheck;
             } catch (error) {
                 const message = 'Could not connect to the server.';
                 uploadStatus.textContent = message;
                 uploadStatus.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
                 console.error('Compatibility check failed:', error);
-                return { compatible: false, message };
+                lastServerCheck = { compatible: false, message };
+                return lastServerCheck;
             }
         }
 
         function validateLifetimeInput() {
-            if (!serverCapabilities || !serverCapabilities.upload) return false; // Because we can't validate
+            if (!serverCapabilities || !serverCapabilities.upload) return true; // If we can't validate, don't block UI.
 
             const limitHours = serverCapabilities.upload.maxLifetimeHours;
 
@@ -605,7 +488,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (uploadStatus.textContent.includes('File lifetime too long')) {
                     uploadStatus.textContent = '';
                 }
-                if (selectedFile) uploadBtn.disabled = false;
+                if (selectedFile && lastServerCheck.compatible) uploadBtn.disabled = false;
                 return true;
             }
         }
@@ -638,6 +521,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
+            // E2EE toggle
+            if (!serverCapabilities.upload.e2ee) {
+                encryptCheckbox.checked = false;
+                encryptCheckbox.disabled = true;
+            } else {
+                encryptCheckbox.disabled = false;
+            }
+
             // Re-validate current inputs
             validateLifetimeInput();
         }
@@ -651,7 +542,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 fileInput.value = '';
                 uploadBtn.disabled = true;
             } else {
-                uploadBtn.disabled = false;
+                // Keep disabled state consistent with current server compatibility + lifetime limits
+                uploadBtn.disabled = !lastServerCheck.compatible;
+                validateLifetimeInput();
             }
 
             setTimeout(() => {
@@ -659,23 +552,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 progressBar.setAttribute('aria-valuenow', 0);
                 progressBar.textContent = '';
             }, 3000);
-        }
-
-        // --- Crypto Functions ---
-        async function generateKey() {
-            return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-        }
-
-        async function exportKey(key) {
-            const exported = await crypto.subtle.exportKey('raw', key);
-            return btoa(String.fromCharCode.apply(null, new Uint8Array(exported)));
-        }
-
-        async function encryptData(dataBuffer, key) {
-            const iv = crypto.getRandomValues(new Uint8Array(12));
-            const encryptedContent = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, dataBuffer);
-            const finalBlob = new Blob([iv, new Uint8Array(encryptedContent)]);
-            return finalBlob;
         }
 
         window.electronAPI.rendererReady();
