@@ -22,6 +22,9 @@ const contentDisposition = require('content-disposition');
 const { FSDB } = require('file-system-db');
 const { v4: uuidv4 } = require('uuid');
 
+const serverName = process.env.SERVER_NAME || 'Shadownloader Server';
+log('info', `Server name: ${serverName}`);
+
 const enableE2EE = process.env.ENABLE_E2EE === 'true';
 log('info', `End-to-End Encryption (E2EE) Enabled: ${enableE2EE}`);
 
@@ -76,13 +79,13 @@ if (isNaN(maxFileSizeMB) || maxFileSizeMB < 0 || !Number.isInteger(Number(maxFil
 }
 
 maxFileSizeMB = Number(maxFileSizeMB);
-const MAX_BYTES = maxFileSizeMB === 0 ? Infinity : maxFileSizeMB * 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = maxFileSizeMB === 0 ? Infinity : maxFileSizeMB * 1024 * 1024;
 log('info', `MAX_FILE_SIZE_MB: ${maxFileSizeMB} MB`);
 if (Number(maxFileSizeMB) === 0) {
     log('warn', 'MAX_FILE_SIZE_MB is set to 0! Files of any size can be uploaded.');
 }
 
-let maxStorageGB = process.env.MAX_STORAGE_GB ? process.env.MAX_STORAGE_GB : 0;
+let maxStorageGB = process.env.MAX_STORAGE_GB ? process.env.MAX_STORAGE_GB : 10;
 if (isNaN(maxStorageGB) || maxStorageGB < 0) {
     log('error', 'Invalid MAX_STORAGE_GB environment variable. It must be a non-negative number.');
     process.exit(1);
@@ -99,12 +102,27 @@ if (maxFileSizeMB > (maxStorageGB * 1024) && maxStorageGB !== 0) {
     log('warn', 'MAX_FILE_SIZE_MB is larger than MAX_STORAGE_GB! Any uploads larger than the allocated storage quota will be rejected.');
 }
 
+let maxFileLifetimeHours = process.env.MAX_FILE_LIFETIME_HOURS ? process.env.MAX_FILE_LIFETIME_HOURS : 24;
+if (isNaN(maxFileLifetimeHours) || maxFileLifetimeHours < 0) {
+    log('error', 'Invalid MAX_FILE_LIFETIME_HOURS environment variable. It must be a non-negative number.');
+    process.exit(1);
+}
+
+maxFileLifetimeHours = Number(maxFileLifetimeHours);
+const MAX_FILE_LIFETIME_MS = maxFileLifetimeHours === 0 ? Infinity : maxFileLifetimeHours * 60 * 60 * 1000;
+log('info', `MAX_FILE_LIFETIME_HOURS: ${maxFileLifetimeHours} hours`);
+if (Number(maxFileLifetimeHours) === 0) {
+    log('warn', 'MAX_FILE_LIFETIME_HOURS is set to 0! Files will never expire.');
+}
+
 if (!preserveUploads) {
     log('info', 'Clearing any existing uploads on startup...');
     cleanupDir(uploadDir);
 }
 log('info', 'Clearing any zombie uploads and temp files...');
 cleanupDir(tmpDir);
+
+
 
 
 createDirIfNotExists(uploadDir);
@@ -196,7 +214,7 @@ app.post('/upload/init', limiter, (req, res) => {
 
     if (isEncrypted && !enableE2EE) {
         log('warn', 'Rejected an E2EE upload attempt because E2EE is disabled on the server.');
-        return res.status(400).json({ error: 'End-to-end encryption is disabled on this server.' });
+        return res.status(400).json({ error: 'End-to-end encryption is not supported on this server.' });
     }
 
     // Validate filename
@@ -221,8 +239,18 @@ app.post('/upload/init', limiter, (req, res) => {
     if (typeof chunks !== 'number' || !Number.isInteger(chunks) || chunks <= 0) return res.status(400).json({ error: 'Invalid chunk count. Must be a positive integer.' });
 
     // Check File Limit
-    if (size > MAX_BYTES) {
+    if (size > MAX_FILE_SIZE_BYTES) {
         return res.status(413).json({ error: `File exceeds limit of ${maxFileSizeMB} MB.` });
+    }
+
+    // Validate lifetime against max
+    if (MAX_FILE_LIFETIME_MS !== Infinity) {
+        if (lifetime === 0) {
+            return res.status(400).json({ error: `Server does not allow unlimited file lifetime. Max: ${maxFileLifetimeHours} hours.` });
+        }
+        if (lifetime > MAX_FILE_LIFETIME_MS) {
+            return res.status(400).json({ error: `File lifetime exceeds limit of ${maxFileLifetimeHours} hours.` });
+        }
     }
 
     // Check Storage Quota
@@ -462,7 +490,23 @@ app.get('/api/file/:fileId', limiter, (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.status(200).json({ status: 'ok', version, sizeLimit: maxFileSizeMB });
+    res.status(200).json({
+        name: serverName,
+        version: version,
+        capabilities: {
+            upload: {
+                maxSizeMB: maxFileSizeMB,
+                maxLifetimeHours: maxFileLifetimeHours,
+                e2ee: enableE2EE
+            },
+            // p2p: {
+            //     // coming soon
+            // },
+            // webUI: {
+            //     // coming soon
+            // }
+        }
+    });
 });
 
 const cleanupExpiredFiles = () => {

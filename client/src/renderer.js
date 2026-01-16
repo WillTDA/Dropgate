@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const downloadLinkInput = document.getElementById('download-link');
         const copyBtn = document.getElementById('copy-btn');
 
+        let serverCapabilities = null;
         let selectedFile = null;
         const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
 
@@ -66,6 +67,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     fileLifetimeValueInput.value = 0.5;
                 }
             }
+            validateLifetimeInput();
             saveSettings();
         });
 
@@ -80,6 +82,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     fileLifetimeValueInput.value = 0.5;
                 }
             }
+            validateLifetimeInput();
             saveSettings();
         });
 
@@ -290,8 +293,35 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            const cleanUrl = await cleanServerUrl(serverUrlInput.value);
             const useEncryption = encryptCheckbox.checked;
+
+            // Use cached capabilities
+            if (serverCapabilities && serverCapabilities.upload) {
+                const maxMB = serverCapabilities.upload.maxSizeMB;
+                if (maxMB > 0 && selectedFile.size > (maxMB * 1024 * 1024)) {
+                    window.electronAPI.uploadFinished({
+                        status: 'error',
+                        error: `File too large. Server limit: ${maxMB} MB.`
+                    });
+                    return;
+                }
+
+                // Double check lifetime before starting
+                if (!validateLifetimeInput()) {
+                    return;
+                }
+
+                // Double check E2EE support
+                if (useEncryption && (!serverCapabilities.upload.e2ee)) {
+                    window.electronAPI.uploadFinished({
+                        status: 'error',
+                        error: 'Server does not support end-to-end encryption.'
+                    });
+                    return;
+                }
+            }
+
+            const cleanUrl = await cleanServerUrl(serverUrlInput.value);
 
             let keyB64 = null;
             let cryptoKey = null;
@@ -496,65 +526,120 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const clientVersion = await window.electronAPI.getClientVersion();
                 const response = await fetch(serverUrl, { signal: AbortSignal.timeout(5000) });
                 const serverInfo = await response.json();
-                const serverVersion = serverInfo.version;
 
-                if (!serverVersion) {
-                    const message = 'Warning: Server version is unknown. Compatibility issues may occur.';
+                if (!serverInfo || !serverInfo?.version || !serverInfo?.capabilities) {
+                    const message = 'Error: Cannot determine server version or capabilities.';
                     uploadStatus.textContent = message;
-                    uploadStatus.className = 'form-text mt-1 text-warning';
-                    return { compatible: true, message };
+                    uploadStatus.className = 'form-text mt-1 text-danger';
+                    return { compatible: false, message };
                 }
 
-                const [clientMajor, clientMinor, _clientPatch] = clientVersion.split('.').map(Number);
-                const [serverMajor, serverMinor, _serverPatch] = serverVersion.split('.').map(Number);
+                serverCapabilities = serverInfo.capabilities;
+                applyServerLimits();
+                const serverVersion = serverInfo.version;
+
+                const [clientMajor, clientMinor] = clientVersion.split('.').map(Number);
+                const [serverMajor, serverMinor] = serverVersion.split('.').map(Number);
 
                 if (clientMajor !== serverMajor) {
                     uploadBtn.disabled = true;
-                    const message = `Error: Incompatible versions. Client is v${clientVersion}, Server is v${serverVersion}. Please use matching major versions.`;
+                    const message = `Error: Incompatible versions. Client v${clientVersion}, Server v${serverVersion}.${serverInfo.name ? ` (${serverInfo.name})` : ''}`;
                     uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-danger';
                     return { compatible: false, message };
                 } else if (clientMinor > serverMinor) {
-                    const message = `Warning: Client (v${clientVersion}) is newer than Server (v${serverVersion}). Some features may not work.`;
+                    const message = `Warning: Client (v${clientVersion}) is newer than Server (v${serverVersion}).${serverInfo.name ? ` (${serverInfo.name})` : ''}`;
                     uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-warning';
                     return { compatible: true, message };
-                } else if (serverMinor > clientMinor) {
-                    const message = `Info: A new client version is available. (Server: v${serverVersion}, Client: v${clientVersion})`;
-                    uploadStatus.textContent = message;
-                    uploadStatus.className = 'form-text mt-1 text-info';
-                    return { compatible: true, message };
                 } else {
-                    // Versions are compatible
-                    const message = `Server: v${serverVersion}, Client: v${clientVersion}`;
+                    const message = `Server: v${serverVersion}, Client: v${clientVersion}.${serverInfo.name ? ` (${serverInfo.name})` : ''}`;
                     uploadStatus.textContent = message;
                     uploadStatus.className = 'form-text mt-1 text-info';
                     return { compatible: true, message };
                 }
             } catch (error) {
-                const message = 'Could not connect to the server to check compatibility.';
+                const message = 'Could not connect to the server.';
                 uploadStatus.textContent = message;
-                uploadStatus.className = 'form-text mt-1 text-warning';
+                uploadStatus.className = 'form-text mt-1 text-danger';
                 console.error('Compatibility check failed:', error);
                 return { compatible: false, message };
             }
         }
 
-        // --- Crypto Functions ---
-        async function generateKey() {
-            return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        function validateLifetimeInput() {
+            if (!serverCapabilities || !serverCapabilities.upload) return false; // Because we can't validate
+
+            const limitHours = serverCapabilities.upload.maxLifetimeHours;
+
+            // If server allows unlimited, and user selected unlimited, we are good.
+            if (limitHours === 0 && fileLifetimeUnitSelect.value === 'unlimited') return true;
+
+            // If user selected unlimited but server forbids it (should be caught by UI, but double check)
+            if (limitHours > 0 && fileLifetimeUnitSelect.value === 'unlimited') {
+                fileLifetimeUnitSelect.value = 'hours';
+                fileLifetimeValueInput.disabled = false;
+            }
+
+            const currentMs = getLifetimeInMs();
+            const limitMs = limitHours * 60 * 60 * 1000;
+
+            if (limitHours > 0 && currentMs > limitMs) {
+                function hoursToReadable(hours) {
+                    if (hours < 1) {
+                        const minutes = Math.round(hours * 60);
+                        return `${minutes} minute(s)`;
+                    } else if (hours < 24) {
+                        return `${hours} hour(s)`;
+                    } else {
+                        const days = (hours / 24).toFixed(2) % 1 === 0 ? (hours / 24).toFixed(0) : (hours / 24).toFixed(2);
+                        return `${days} day(s)`;
+                    }
+                }
+                uploadStatus.textContent = `File lifetime too long. Server limit: ${hoursToReadable(limitHours)}.`;
+                uploadStatus.className = 'form-text mt-1 text-danger';
+                uploadBtn.disabled = true;
+                return false;
+            } else {
+                // Only clear status if it was a time limit error
+                if (uploadStatus.textContent.includes('File lifetime too long')) {
+                    uploadStatus.textContent = '';
+                }
+                if (selectedFile) uploadBtn.disabled = false;
+                return true;
+            }
         }
 
-        async function exportKey(key) {
-            const exported = await crypto.subtle.exportKey('raw', key);
-            return btoa(String.fromCharCode.apply(null, new Uint8Array(exported)));
-        }
+        // Apply server-enforced limits to the UI
+        function applyServerLimits() {
+            if (!serverCapabilities || !serverCapabilities.upload) return;
 
-        async function encryptData(dataBuffer, key) {
-            const iv = crypto.getRandomValues(new Uint8Array(12));
-            const encryptedContent = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, dataBuffer);
-            const finalBlob = new Blob([iv, new Uint8Array(encryptedContent)]);
-            return finalBlob;
+            const limitHours = serverCapabilities.upload.maxLifetimeHours;
+            const unlimitedOption = fileLifetimeUnitSelect.querySelector('option[value="unlimited"]');
+
+            if (limitHours > 0) {
+                // Server has a limit: Disable "Unlimited"
+                if (unlimitedOption) {
+                    unlimitedOption.disabled = true;
+                    unlimitedOption.textContent = 'Unlimited (Disabled by Server)';
+                }
+
+                // If currently selected is unlimited, switch to hours
+                if (fileLifetimeUnitSelect.value === 'unlimited') {
+                    fileLifetimeUnitSelect.value = 'hours';
+                    fileLifetimeValueInput.disabled = false;
+                    fileLifetimeValueInput.value = Math.min(24, limitHours);
+                }
+            } else {
+                // Server allows unlimited
+                if (unlimitedOption) {
+                    unlimitedOption.disabled = false;
+                    unlimitedOption.textContent = 'Unlimited';
+                }
+            }
+
+            // Re-validate current inputs
+            validateLifetimeInput();
         }
 
         // Helper to reset the UI state after an upload completes or fails
@@ -574,6 +659,23 @@ document.addEventListener('DOMContentLoaded', async () => {
                 progressBar.setAttribute('aria-valuenow', 0);
                 progressBar.textContent = '';
             }, 3000);
+        }
+
+        // --- Crypto Functions ---
+        async function generateKey() {
+            return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+        }
+
+        async function exportKey(key) {
+            const exported = await crypto.subtle.exportKey('raw', key);
+            return btoa(String.fromCharCode.apply(null, new Uint8Array(exported)));
+        }
+
+        async function encryptData(dataBuffer, key) {
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encryptedContent = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, dataBuffer);
+            const finalBlob = new Blob([iv, new Uint8Array(encryptedContent)]);
+            return finalBlob;
         }
 
         window.electronAPI.rendererReady();
