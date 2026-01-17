@@ -32,7 +32,7 @@ log('info', `Web UI Enabled: ${enableWebUI}`);
 log('info', `Peer-to-Peer (P2P) Enabled: ${enableP2P}`);
 log('info', `Upload Protocol Enabled: ${enableUpload}`);
 
-const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE === 'true';
+const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE !== 'false';
 log('info', `Upload End-to-End Encryption (E2EE) Enabled: ${uploadEnableE2EE}`);
 
 if (enableUpload && uploadEnableE2EE) {
@@ -556,7 +556,7 @@ if (enableUpload) {
             }
         }
 
-        return sendHTML(path.join(__dirname, 'public', 'decryptor.html'), 200);
+        return sendHTML(path.join(__dirname, 'public', 'download.html'), 200);
     });
 }
 
@@ -611,7 +611,7 @@ if (enableUpload) {
 }
 
 app.listen(port, () => {
-    log('info', `Shadownloader Server v${version} is running. | Port: ${port} (HTTP)`);
+    log('info', `Shadownloader Server v${version} is running. | Port: ${port}`);
 });
 
 const handleShutdown = () => {

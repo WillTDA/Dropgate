@@ -34,7 +34,7 @@ When running with E2EE, your server acts purely as a **blind data relay** — th
 | `ENABLE_UPLOAD` | `false` | Enables the upload protocol and its routes. |
 | `ENABLE_P2P` | `true` | Enables the Peer Mode (P2P) capability flag. |
 | `ENABLE_WEB_UI` | `true` | Enables the Web UI capability flag. |
-| `UPLOAD_ENABLE_E2EE` | `false` | Enables end-to-end encryption for uploads. Requires HTTPS reverse proxy for secure operation. |
+| `UPLOAD_ENABLE_E2EE` | `true` | Enables end-to-end encryption for uploads. Requires HTTPS reverse proxy for secure operation. |
 | `UPLOAD_PRESERVE_UPLOADS` | `false` | Keeps uploaded files after restarts. Use with mapped volume (`/usr/src/app/uploads`). |
 | `UPLOAD_MAX_FILE_SIZE_MB` | `100` | Maximum allowed file size in MB. Set to `0` for unlimited. |
 | `UPLOAD_MAX_STORAGE_GB` | `10` | Maximum storage quota in GB. Set to `0` for unlimited. |
