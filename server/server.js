@@ -33,7 +33,7 @@ log('info', `Web UI Enabled: ${enableWebUI}`);
 log('info', `Peer-to-Peer (P2P) Enabled: ${enableP2P}`);
 log('info', `Upload Protocol Enabled: ${enableUpload}`);
 
-const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE === 'true';
+const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE !== 'false';
 log('info', `Upload End-to-End Encryption (E2EE) Enabled: ${uploadEnableE2EE}`);
 
 if (enableUpload && uploadEnableE2EE) {
@@ -581,6 +581,46 @@ if (enableP2P) {
     });
 }
 
+app.use('/api', apiRouter);
+if (enableUpload) {
+    app.use('/upload', uploadRouter);
+
+    app.get('/:fileId', limiter, (req, res) => {
+        const sendHTML = (htmlFilePath, status) => {
+            const nonce = res.locals.nonce;
+            return fs.readFile(htmlFilePath, 'utf8', (err, data) => {
+                if (err) {
+                    log('error', `Failed to read ${path.basename(htmlFilePath)}: ${err.message}`);
+                    return res.status(500).send('Server error');
+                }
+                const modifiedHtml = data.replace(/%%NONCE%%/g, nonce);
+                res.status(status).setHeader('Content-Type', 'text/html').send(modifiedHtml);
+            });
+        };
+
+        const fileId = req.params.fileId;
+        const fileInfo = fileDatabase.get(fileId);
+
+        if (!fileInfo) return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
+
+        if (fileInfo.isEncrypted) {
+            if (!uploadEnableE2EE) {
+                log('warn', 'Blocked access to an encrypted file because upload E2EE is disabled.');
+                return sendHTML(path.join(__dirname, 'public', '404.html'), 404);
+            }
+
+            // The Web Crypto API requires a secure context (HTTPS).
+            // If we are behind a reverse proxy, check if the original request was secure.
+            if (req.protocol !== 'https') {
+                log('warn', 'Blocked access to an encrypted file over an insecure connection (HTTP).');
+                return sendHTML(path.join(__dirname, 'public', 'insecure.html'), 400);
+            }
+        }
+
+        return sendHTML(path.join(__dirname, 'public', 'download.html'), 200);
+    });
+}
+
 app.get('/', limiter, (req, res) => {
     if (!enableWebUI) {
         return res.send("Shadownloader Server is running.");
@@ -640,7 +680,7 @@ if (enableUpload) {
 }
 
 app.listen(port, () => {
-    log('info', `Shadownloader Server v${version} is running. | Port: ${port} (HTTP)`);
+    log('info', `Shadownloader Server v${version} is running. | Port: ${port}`);
 });
 
 const handleShutdown = () => {
