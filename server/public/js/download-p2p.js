@@ -38,6 +38,8 @@ const showError = (title, message) => {
   elMsg.textContent = message;
   elMeta.hidden = true;
   elActions.hidden = false;
+  elBytes.hidden = true;
+  elBar.parentElement.hidden = true;
   card?.classList.remove('border-primary', 'border-success');
   card?.classList.add('border', 'border-danger');
   if (iconContainer) {
