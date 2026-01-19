@@ -211,6 +211,13 @@ export async function startP2PSend({
   let transferActive = false;
   let transferCompleted = false;
 
+  const reportProgress = ({ received, total }) => {
+    const safeTotal = Number.isFinite(total) && total > 0 ? total : file.size;
+    const safeReceived = Math.min(Number(received) || 0, safeTotal || 0);
+    const percent = safeTotal ? (safeReceived / safeTotal) * 100 : 0;
+    onProgress?.({ sent: safeReceived, total: safeTotal, percent });
+  };
+
   const stop = () => {
     stopped = true;
     try { activeConn?.close(); } catch {}
@@ -241,6 +248,10 @@ export async function startP2PSend({
       if (!data.t) return;
       if (data.t === 'ready') {
         readyResolve?.();
+        return;
+      }
+      if (data.t === 'progress') {
+        reportProgress({ received: data.received, total: data.total });
         return;
       }
       if (data.t === 'ack' && data.phase === 'end') {
@@ -291,23 +302,22 @@ export async function startP2PSend({
             }
           }
 
-          const percent = total ? (sent / total) * 100 : 0;
-          onProgress?.({ sent, total, percent });
         }
 
         conn.send({ t: 'end' });
-        onProgress?.({ sent: file.size, total: file.size, percent: 100 });
 
         const ackResult = ackPromise
           ? await Promise.race([ackPromise, sleep(endAckTimeoutMs).catch(() => null)])
           : null;
-        if (ackResult && typeof ackResult === 'object') {
-          onProgress?.({
-            sent: Number(ackResult.received) || file.size,
-            total: Number(ackResult.total) || file.size,
-            percent: 100,
-          });
+        if (!ackResult || typeof ackResult !== 'object') {
+          throw new ShadownloaderNetworkError('Receiver did not confirm completion.');
         }
+        const ackTotal = Number(ackResult.total) || file.size;
+        const ackReceived = Number(ackResult.received) || 0;
+        if (ackTotal && ackReceived < ackTotal) {
+          throw new ShadownloaderNetworkError('Receiver reported an incomplete transfer.');
+        }
+        reportProgress({ received: ackReceived || ackTotal, total: ackTotal });
         transferCompleted = true;
         transferActive = false;
         onComplete?.();
@@ -357,6 +367,8 @@ export async function startP2PReceive({
   let writer = null;
   let total = 0;
   let received = 0;
+  let lastProgressSentAt = 0;
+  const progressIntervalMs = 120;
 
   const stop = () => {
     try { writer?.abort(); } catch {}
@@ -395,6 +407,11 @@ export async function startP2PReceive({
           }
 
           if (data.t === 'end') {
+            if (total && received < total) {
+              const err = new ShadownloaderNetworkError('Transfer ended before the full file was received.');
+              try { conn.send({ t: 'error', message: err.message }); } catch {}
+              throw err;
+            }
             if (writer) await writer.close();
             onComplete?.({ received, total });
             try { conn.send({ t: 'ack', phase: 'end', received, total }); } catch {}
@@ -419,6 +436,11 @@ export async function startP2PReceive({
         received += buf.byteLength;
         const percent = total ? Math.min(100, (received / total) * 100) : 0;
         onProgress?.({ received, total, percent });
+        const now = Date.now();
+        if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
+          lastProgressSentAt = now;
+          try { conn.send({ t: 'progress', received, total }); } catch {}
+        }
       } catch (err) {
         onError?.(err);
         stop();

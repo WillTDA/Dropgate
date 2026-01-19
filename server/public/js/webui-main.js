@@ -51,6 +51,9 @@ const els = {
   cancelP2P: $('cancelP2P'),
 
   shareCard: $('shareCard'),
+  shareTitle: $('shareTitle'),
+  shareSub: $('shareSub'),
+  shareLinkGroup: $('shareLinkGroup'),
   shareLink: $('shareLink'),
   copyShare: $('copyShare'),
   qrShare: $('qrShare'),
@@ -415,9 +418,12 @@ function showProgress({ title, sub, percent, doneBytes, totalBytes, icon, iconCo
   }
 }
 
-function showShare(link) {
+function showShare({ link = '', title = 'Upload complete', sub = 'Share this link with your recipient:', showLinkGroup = true } = {}) {
   showPanels('share');
-  els.shareLink.value = link;
+  if (els.shareTitle) els.shareTitle.textContent = title;
+  if (els.shareSub) els.shareSub.textContent = sub;
+  if (els.shareLinkGroup) setHidden(els.shareLinkGroup, !showLinkGroup);
+  els.shareLink.value = link || '';
   // Hide code entry when upload complete
   if (els.codeCard) setHidden(els.codeCard, true);
 }
@@ -544,7 +550,7 @@ async function startStandardUpload() {
     });
 
     showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'cloud_upload' });
-    showShare(result.downloadUrl);
+    showShare({ link: result.downloadUrl });
   } catch (err) {
     console.error(err);
     showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
@@ -587,12 +593,13 @@ async function startP2PSendFlow() {
       showProgress({ title: 'Sending…', sub: 'Transferring…', percent, doneBytes: sent, totalBytes: total, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
-      showProgress({ title: 'Sending…', sub: 'Done!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'check_circle', iconColor: 'text-success' });
-      setTimeout(() => {
-        stopP2P();
-        resetToMain();
-        showToast('Transfer complete.');
-      }, 800);
+      stopP2P();
+      showShare({
+        title: 'Transfer complete',
+        sub: 'Your recipient has received the file.',
+        showLinkGroup: false,
+      });
+      showToast('Transfer complete.', 'success');
     },
     onError: (err) => {
       console.error(err);
