@@ -209,6 +209,7 @@ export async function startP2PSend({
   let stopped = false;
   let activeConn = null;
   let transferActive = false;
+  let transferCompleted = false;
 
   const stop = () => {
     stopped = true;
@@ -307,6 +308,8 @@ export async function startP2PSend({
             percent: 100,
           });
         }
+        transferCompleted = true;
+        transferActive = false;
         onComplete?.();
         stop();
       } catch (err) {
@@ -321,7 +324,7 @@ export async function startP2PSend({
     });
 
     conn.on('close', () => {
-      if (transferActive) {
+      if (!transferCompleted && transferActive && !stopped) {
         onError?.(new ShadownloaderNetworkError('Receiver disconnected before transfer completed.'));
       }
       stop();
