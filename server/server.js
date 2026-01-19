@@ -1,3 +1,7 @@
+process.env.ENABLE_UPLOAD = true
+process.env.UPLOAD_MAX_STORAGE_GB = 1
+process.env.UPLOAD_MAX_FILE_SIZE_MB = 1000
+
 const log = (level, message) => {
     const lvl = String(level || '').toLowerCase();
     const prefix = `[${new Date().toISOString()}] [${String(level).toUpperCase()}]`;

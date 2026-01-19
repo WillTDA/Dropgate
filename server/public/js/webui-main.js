@@ -255,7 +255,7 @@ function updateCapabilitiesUI() {
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
     els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
-      ? `${maxText}. Anything over will use direct transfer (P2P).`
+      ? `${maxText} Anything over will use direct transfer (P2P).`
       : maxText;
   } else {
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
@@ -289,7 +289,7 @@ function updateCapabilitiesUI() {
       encMessage.textContent = 'End-to-End Encryption is not supported on this server.';
       encMessage.className = 'encryption-message text-body-secondary';
     } else if (canEncrypt) {
-      encMessage.textContent = 'End-to-End Encryption is recommended.';
+      encMessage.textContent = 'End-to-End Encryption is available.';
       encMessage.className = 'encryption-message text-success';
     } else if (!state.uploadEnabled) {
       encMessage.textContent = '';
