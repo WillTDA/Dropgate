@@ -1,11 +1,5 @@
 /**
  * Shadownloader Core (ES Module)
- *
- * Server API expectations:
- *  - GET  /api/info
- *  - POST /upload/init
- *  - POST /upload/chunk  (octet-stream) + headers: X-Upload-ID, X-Chunk-Index, X-Chunk-Hash
- *  - POST /upload/complete
  */
 
 export const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
@@ -13,9 +7,30 @@ export const AES_GCM_IV_BYTES = 12;
 export const AES_GCM_TAG_BYTES = 16;
 export const ENCRYPTION_OVERHEAD_PER_CHUNK = AES_GCM_IV_BYTES + AES_GCM_TAG_BYTES; // 28
 
-/** @typedef {{ maxSizeMB:number, maxLifetimeHours:number, e2ee:boolean }} UploadCapabilities */
-/** @typedef {{ upload?: UploadCapabilities }} ServerCapabilities */
-/** @typedef {{ name?:string, version:string, capabilities?: ServerCapabilities }} ServerInfo */
+/**
+ * @typedef {{
+ *   enabled: boolean,
+ *   maxSizeMB?: number,
+ *   maxLifetimeHours?: number,
+ *   e2ee?: boolean
+ * }} UploadCapabilities
+ *
+ * @typedef {{
+ *   enabled: boolean,
+ *   peerjsPath?: string,
+ *   iceServers?: RTCIceServer[]
+ * }} P2PCapabilities
+ *
+ * @typedef {{ enabled: boolean }} WebUICapabilities
+ *
+ * @typedef {{
+ *   upload?: UploadCapabilities,
+ *   p2p?: P2PCapabilities,
+ *   webUI?: WebUICapabilities
+ * }} ServerCapabilities
+ *
+ * @typedef {{ name?:string, version:string, capabilities?: ServerCapabilities }} ServerInfo
+ */
 
 export class ShadownloaderError extends Error {
   /** @param {string} message @param {{code?:string, details?:any, cause?:any}} [opts] */
@@ -173,10 +188,42 @@ async function createPeerWithRetries({ code, codeGenerator, maxAttempts, buildPe
   throw lastError || new ShadownloaderNetworkError('Could not establish PeerJS connection.');
 }
 
+/**
+ * Start a direct transfer (P2P) sender session.
+ *
+ * If you pass serverInfo (from ShadownloaderClient.getServerInfo), the function will
+ * refuse to run when serverInfo.capabilities.p2p.enabled is false.
+ *
+ * NOTE: Direct transfer requires a secure context (HTTPS or localhost).
+ *
+ * @param {{
+ *   file: File|Blob,
+ *   serverInfo?: ServerInfo,
+ *   peerjsPath?: string,
+ *   iceServers?: RTCIceServer[],
+ *   locationObj?: Location,
+ *   peerjsScriptSrc?: string,
+ *   codeGenerator?: () => string,
+ *   maxAttempts?: number,
+ *   chunkSize?: number,
+ *   readyTimeoutMs?: number,
+ *   endAckTimeoutMs?: number,
+ *   bufferHighWaterMark?: number,
+ *   bufferLowWaterMark?: number,
+ *   onCode?: (code: string, attempt: number) => void,
+ *   onStatus?: (evt: any) => void,
+ *   onProgress?: (evt: {sent:number,total:number,percent:number}) => void,
+ *   onComplete?: () => void,
+ *   onError?: (err: any) => void
+ * }} [opts]
+ *
+ * @returns {Promise<{peer:any, code:string, stop:() => void}>}
+ */
 export async function startP2PSend({
   file,
-  peerjsPath = '/peerjs',
-  iceServers = [],
+  serverInfo,
+  peerjsPath,
+  iceServers,
   locationObj = globalThis.location,
   peerjsScriptSrc = '/vendor/peerjs.min.js',
   codeGenerator = generateP2PCode,
@@ -193,9 +240,21 @@ export async function startP2PSend({
   onError,
 } = {}) {
   if (!file) throw new ShadownloaderValidationError('File is missing.');
+  if (!isSecureContextForP2P(locationObj, globalThis.isSecureContext)) {
+    throw new ShadownloaderValidationError('Direct transfer requires a secure context (HTTPS or localhost).');
+  }
+
+  const p2pCaps = serverInfo?.capabilities?.p2p;
+  if (serverInfo && !p2pCaps?.enabled) {
+    throw new ShadownloaderValidationError('Direct transfer is disabled on this server.');
+  }
+
+  const peerjsPathFinal = peerjsPath ?? p2pCaps?.peerjsPath ?? '/peerjs';
+  const iceServersFinal = iceServers ?? p2pCaps?.iceServers ?? [];
+
   await ensurePeerJsLoaded({ src: peerjsScriptSrc });
 
-  const peerOpts = buildPeerOptions({ peerjsPath, iceServers, locationObj });
+  const peerOpts = buildPeerOptions({ peerjsPath: peerjsPathFinal, iceServers: iceServersFinal, locationObj });
   const buildPeer = (id) => new globalThis.Peer(id, peerOpts);
 
   const { peer, code } = await createPeerWithRetries({
@@ -267,6 +326,7 @@ export async function startP2PSend({
     conn.on('open', async () => {
       try {
         transferActive = true;
+        if (stopped) return; // ignore if stopped meanwhile
         conn.send({ t: 'meta', name: file.name, size: file.size, mime: file.type || 'application/octet-stream' });
 
         let sent = 0;
@@ -281,6 +341,7 @@ export async function startP2PSend({
         }
 
         for (let offset = 0; offset < total; offset += chunkSize) {
+          if (stopped) return; // ignore if stopped meanwhile
           const slice = file.slice(offset, offset + chunkSize);
           const buf = await slice.arrayBuffer();
           conn.send(buf);
@@ -304,6 +365,7 @@ export async function startP2PSend({
 
         }
 
+        if (stopped) return; // ignore if stopped meanwhile
         conn.send({ t: 'end' });
 
         const ackTimeoutMs = Number.isFinite(endAckTimeoutMs)
@@ -347,10 +409,37 @@ export async function startP2PSend({
   return { peer, code, stop };
 }
 
+/**
+ * Start a direct transfer (P2P) receiver session.
+ *
+ * If you pass serverInfo (from ShadownloaderClient.getServerInfo), the function will
+ * refuse to run when serverInfo.capabilities.p2p.enabled is false.
+ *
+ * NOTE: Direct transfer requires a secure context (HTTPS or localhost).
+ *
+ * @param {{
+ *   code: string,
+ *   serverInfo?: ServerInfo,
+ *   peerjsPath?: string,
+ *   iceServers?: RTCIceServer[],
+ *   locationObj?: Location,
+ *   peerjsScriptSrc?: string,
+ *   streamSaverObj?: any,
+ *   onStatus?: (evt: any) => void,
+ *   onMeta?: (evt: {name:string,total:number}) => void,
+ *   onProgress?: (evt: {received:number,total:number,percent:number}) => void,
+ *   onComplete?: (evt: {received:number,total:number}) => void,
+ *   onError?: (err: any) => void,
+ *   onDisconnect?: () => void
+ * }} [opts]
+ *
+ * @returns {Promise<{peer:any, stop:() => void}>}
+ */
 export async function startP2PReceive({
   code,
-  peerjsPath = '/peerjs',
-  iceServers = [],
+  serverInfo,
+  peerjsPath,
+  iceServers,
   locationObj = globalThis.location,
   peerjsScriptSrc = '/vendor/peerjs.min.js',
   streamSaverObj = globalThis.streamSaver,
@@ -362,9 +451,26 @@ export async function startP2PReceive({
   onDisconnect,
 } = {}) {
   if (!code) throw new ShadownloaderValidationError('No sharing code was provided.');
+  if (!isSecureContextForP2P(locationObj, globalThis.isSecureContext)) {
+    throw new ShadownloaderValidationError('Direct transfer requires a secure context (HTTPS or localhost).');
+  }
+
+  const p2pCaps = serverInfo?.capabilities?.p2p;
+  if (serverInfo && !p2pCaps?.enabled) {
+    throw new ShadownloaderValidationError('Direct transfer is disabled on this server.');
+  }
+
+  const normalizedCode = String(code).trim().replace(/\s+/g, '').toUpperCase();
+  if (!isP2PCodeLike(normalizedCode)) {
+    throw new ShadownloaderValidationError('Invalid direct transfer code.');
+  }
+
+  const peerjsPathFinal = peerjsPath ?? p2pCaps?.peerjsPath ?? '/peerjs';
+  const iceServersFinal = iceServers ?? p2pCaps?.iceServers ?? [];
+
   await ensurePeerJsLoaded({ src: peerjsScriptSrc });
 
-  const peerOpts = buildPeerOptions({ peerjsPath, iceServers, locationObj });
+  const peerOpts = buildPeerOptions({ peerjsPath: peerjsPathFinal, iceServers: iceServersFinal, locationObj });
   const peer = new globalThis.Peer(undefined, peerOpts);
 
   let writer = null;
@@ -385,7 +491,7 @@ export async function startP2PReceive({
   });
 
   peer.on('open', () => {
-    const conn = peer.connect(code, { reliable: true });
+    const conn = peer.connect(normalizedCode, { reliable: true });
 
     conn.on('open', () => {
       onStatus?.({ phase: 'connected', message: 'Waiting for file details...' });
@@ -766,7 +872,9 @@ export class ShadownloaderClient {
       throw new ShadownloaderValidationError('Server does not support file uploads.');
     }
 
-    if (!(file instanceof File) && !(file instanceof Blob)) {
+    const isFile = (typeof File !== 'undefined') && (file instanceof File);
+    const isBlob = (typeof Blob !== 'undefined') && (file instanceof Blob);
+    if (!isFile && !isBlob) {
       throw new ShadownloaderValidationError('File is missing or invalid.');
     }
 
@@ -821,7 +929,7 @@ export class ShadownloaderClient {
    *
    * @param {{
    *  serverUrl: string,
-   *  file: File,
+   *  file: File|Blob,
    *  lifetimeMs: number,
    *  encrypt: boolean,
    *  filenameOverride?: string,

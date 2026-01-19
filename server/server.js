@@ -1,3 +1,5 @@
+process.env.ENABLE_UPLOAD = process.env.ENABLE_UPLOAD || 'true';
+
 const log = (level, message) => {
     const lvl = String(level || '').toLowerCase();
     const prefix = `[${new Date().toISOString()}] [${String(level).toUpperCase()}]`;
@@ -56,28 +58,8 @@ const p2pStunUrls = process.env.P2P_STUN_SERVERS
     ? parseList(process.env.P2P_STUN_SERVERS)
     : ['stun:stun.cloudflare.com:3478'];
 
-// TURN is intentionally opt-in.
-const p2pTurnEnabled = process.env.P2P_TURN_ENABLED === 'true';
-const p2pTurnUrls = p2pTurnEnabled ? parseList(process.env.P2P_TURN_URLS) : [];
-const p2pTurnUsername = p2pTurnEnabled ? (process.env.P2P_TURN_USERNAME || '') : '';
-const p2pTurnCredential = p2pTurnEnabled ? (process.env.P2P_TURN_CREDENTIAL || '') : '';
-
 const p2pIceServers = [];
 if (p2pStunUrls.length) p2pIceServers.push({ urls: p2pStunUrls });
-if (p2pTurnEnabled) {
-    if (!p2pTurnUrls.length) {
-        log('warn', 'P2P_TURN_ENABLED is true but P2P_TURN_URLS is empty. TURN will not be used.');
-    } else if (!p2pTurnUsername || !p2pTurnCredential) {
-        log('warn', 'P2P_TURN_ENABLED is true but TURN credentials are missing (P2P_TURN_USERNAME / P2P_TURN_CREDENTIAL).');
-    }
-    if (p2pTurnUrls.length) {
-        p2pIceServers.push({
-            urls: p2pTurnUrls,
-            username: p2pTurnUsername,
-            credential: p2pTurnCredential,
-        });
-    }
-}
 
 const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE !== 'false';
 log('info', `Upload End-to-End Encryption (E2EE) Enabled: ${uploadEnableE2EE}`);
@@ -599,7 +581,6 @@ apiRouter.get('/info', limiter, (req, res) => {
                 enabled: enableP2P,
                 peerjsPath: PEERJS_MOUNT_PATH,
                 iceServers: p2pIceServers,
-                turnEnabled: p2pTurnEnabled,
             },
             webUI: {
                 enabled: enableWebUI

@@ -87,6 +87,7 @@ async function start() {
   try {
     await startP2PReceive({
       code,
+      serverInfo: info,
       peerjsPath,
       iceServers,
       onStatus: () => {
@@ -122,7 +123,7 @@ async function start() {
       },
       onError: (err) => {
         console.error(err);
-        showError('Transfer Error', err?.message || 'An error occurred during the transfer.');
+        showError('Transfer Error', 'An error occurred during the transfer.');
       },
       onDisconnect: () => {
         showError('Disconnected', 'The sender disconnected before the transfer finished.');
@@ -130,7 +131,7 @@ async function start() {
     });
   } catch (err) {
     console.error(err);
-    showError('Connection failed', err?.message || 'Could not connect.');
+    showError('Connection failed', 'Could not connect.');
   }
 }
 

@@ -10,6 +10,7 @@ import {
 const $ = (id) => document.getElementById(id);
 
 const els = {
+  tagline: $('tagline'),
   dropzone: $('dropzone'),
   selectFileBtn: $('selectFileBtn'),
   fileInput: $('fileInput'),
@@ -254,7 +255,7 @@ function updateCapabilitiesUI() {
   if (state.uploadEnabled) {
     const maxText = (state.maxSizeMB === 0)
       ? 'You can upload files of any size.'
-      : `Max upload size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
+      : `Max upload size: ${formatBytes(state.maxSizeMB * 1024 * 1024)}.`;
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
     els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
@@ -410,6 +411,10 @@ function showProgress({ title, sub, percent, doneBytes, totalBytes, icon, iconCo
       els.progressIcon.textContent = icon;
     }
   }
+
+  els.shareCard.classList.remove('border-danger', 'border-success', 'border-primary');
+  els.shareCard.classList.add('border', iconColor ? iconColor.replace('text-', 'border-') : 'border-primary');
+
   if (title) els.progressTitle.textContent = title;
   if (sub) els.progressSub.textContent = sub;
   if (typeof percent === 'number') els.progressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
@@ -432,6 +437,7 @@ function resetToMain() {
   state.file = null;
   state.fileTooLargeForStandard = false;
   updateFileUI();
+  els.tagline.textContent = 'Send a file securely, or enter a sharing code to receive one.';
   showPanels('main');
   els.shareLink.value = '';
   els.p2pLink.value = '';
@@ -500,6 +506,7 @@ async function startStandardUpload() {
     return;
   }
 
+  els.tagline.textContent = 'Standard Upload';
   const encrypt = Boolean(state.encrypt);
   const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
     ? state.maxSizeMB * 1000 * 1000
@@ -576,8 +583,10 @@ async function startP2PSendFlow() {
     return;
   }
 
+  els.tagline.textContent = 'Direct Transfer (P2P)';
   state.p2pSession = await startP2PSend({
     file,
+    serverInfo: state.info,
     peerjsPath: state.peerjsPath,
     iceServers: state.iceServers,
     onCode: (id) => {
@@ -603,14 +612,10 @@ async function startP2PSendFlow() {
     },
     onError: (err) => {
       console.error(err);
-      showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
+      showProgress({ title: 'Transfer Failed', sub: 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
       els.p2pWaitCard?.classList.remove('border-primary');
       els.p2pWaitCard?.classList.add('border', 'border-danger');
       stopP2P();
-      setTimeout(() => {
-        resetToMain();
-        showToast(err?.message || 'Transfer failed.');
-      }, 2000);
     },
   });
 
