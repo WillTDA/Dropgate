@@ -661,7 +661,7 @@ export class ShadownloaderClient {
     // Server compares against *reserved totalSize* (includes encryption overhead), so we mirror that here.
     const maxMB = Number(caps.maxSizeMB);
     if (Number.isFinite(maxMB) && maxMB > 0) {
-      const limitBytes = maxMB * 1024 * 1024;
+      const limitBytes = maxMB * 1000 * 1000;
       const totalChunks = Math.ceil(fileSize / this.chunkSize);
       const estimatedBytes = estimateTotalUploadSizeBytes(fileSize, totalChunks, Boolean(encrypt));
       if (estimatedBytes > limitBytes) {

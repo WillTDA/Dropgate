@@ -15,27 +15,35 @@ const code = document.body.dataset.code;
 let total = 0;
 let received = 0;
 
-const fmtBytes = (bytes) => {
-  if (!Number.isFinite(bytes)) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = bytes;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
-  const dp = v < 10 && u > 0 ? 2 : (v < 100 ? 1 : 0);
-  return `${v.toFixed(dp)} ${units[u]}`;
-};
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return '0 bytes';
+  if (bytes === 0) return '0 bytes';
+  const k = 1000;
+  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const v = bytes / Math.pow(k, i);
+  return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
+}
 
 const setProgress = () => {
   const pct = total > 0 ? Math.min(100, (received / total) * 100) : 0;
   elBar.style.width = `${pct}%`;
-  elBytes.textContent = `${fmtBytes(received)} / ${fmtBytes(total)}`;
+  elBytes.textContent = `${formatBytes(received)} / ${formatBytes(total)}`;
 };
 
 const showError = (title, message) => {
+  const card = document.getElementById('status-card');
+  const iconContainer = document.getElementById('icon-container');
   elTitle.textContent = title;
   elMsg.textContent = message;
   elMeta.hidden = true;
   elActions.hidden = false;
+  card?.classList.remove('border-primary', 'border-success');
+  card?.classList.add('border', 'border-danger');
+  if (iconContainer) {
+    iconContainer.className = 'mb-3 text-danger';
+    iconContainer.innerHTML = '<span class="material-icons-round">error</span>';
+  }
 };
 
 async function loadServerInfo() {
@@ -87,7 +95,7 @@ async function start() {
         total = nextTotal;
         received = 0;
         elMeta.hidden = false;
-        elMeta.textContent = `Receiving: ${name} (${fmtBytes(total)})`;
+        elMeta.textContent = `Receiving: ${name} (${formatBytes(total)})`;
         elTitle.textContent = 'Receiving…';
         elMsg.textContent = 'Keep this tab open until the transfer completes.';
         setProgress();
@@ -98,14 +106,22 @@ async function start() {
         setProgress();
       },
       onComplete: () => {
+        const card = document.getElementById('status-card');
+        const iconContainer = document.getElementById('icon-container');
         elTitle.textContent = 'Complete';
         elMsg.textContent = 'Transfer finished.';
         elMeta.textContent = 'Saved to your downloads.';
         elActions.hidden = false;
+        card?.classList.remove('border-primary');
+        card?.classList.add('border', 'border-success');
+        if (iconContainer) {
+          iconContainer.className = 'mb-3 text-success';
+          iconContainer.innerHTML = '<span class="material-icons-round">check_circle</span>';
+        }
       },
       onError: (err) => {
         console.error(err);
-        showError('Transfer error', err?.message || 'An error occurred during the transfer.');
+        showError('Transfer Error', err?.message || 'An error occurred during the transfer.');
       },
       onDisconnect: () => {
         showError('Disconnected', 'The sender disconnected before the transfer finished.');

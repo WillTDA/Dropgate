@@ -35,11 +35,13 @@
   }
 
   function formatBytes(bytes) {
-    if (!bytes && bytes !== 0) return 'Unknown';
+    if (!Number.isFinite(bytes)) return '0 bytes';
     if (bytes === 0) return '0 bytes';
-    const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return `${parseFloat((bytes / Math.pow(1024, i)).toFixed(2))} ${units[i]}`;
+    const k = 1000;
+    const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const v = bytes / Math.pow(k, i);
+    return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
   }
 
   async function importKey(keyB64) {

@@ -33,9 +33,7 @@ const els = {
 
   p2pInfo: $('p2pInfo'),
   startBtn: $('startBtn'),
-  startHelp: $('startHelp'),
-  helpMode: $('helpMode'),
-  helpEnc: $('helpEnc'),
+  codeCard: $('codeCard'),
 
   panels: $('panels'),
   progressCard: $('progressCard'),
@@ -49,14 +47,17 @@ const els = {
   p2pCode: $('p2pCode'),
   p2pLink: $('p2pLink'),
   copyP2PLink: $('copyP2PLink'),
-  openP2PLink: $('openP2PLink'),
+  qrP2PLink: $('qrP2PLink'),
   cancelP2P: $('cancelP2P'),
 
   shareCard: $('shareCard'),
   shareLink: $('shareLink'),
   copyShare: $('copyShare'),
-  openShare: $('openShare'),
+  qrShare: $('qrShare'),
   newUpload: $('newUpload'),
+
+  qrModal: $('qrModal'),
+  qrCanvas: $('qrCanvas'),
 
   codeInput: $('codeInput'),
   codeGo: $('codeGo'),
@@ -85,10 +86,10 @@ const state = {
 const coreClient = new ShadownloaderClient({ clientVersion: '0.0.0' });
 
 function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) return '0 B';
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  if (!Number.isFinite(bytes)) return '0 bytes';
+  if (bytes === 0) return '0 bytes';
+  const k = 1000;
+  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
   return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
@@ -98,7 +99,13 @@ function showToast(text, type = 'info', timeoutMs = 4500) {
   const el = els.statusAlert;
   if (!el) { alert(text); return; }
   el.textContent = String(text || '');
-  el.className = `alert alert-${type} shadow-sm`;
+  // Map type to Bootstrap alert class and add custom toast styling
+  let alertType = 'info';
+  if (type === 'warning') alertType = 'warning';
+  else if (type === 'error' || type === 'danger') alertType = 'danger';
+  else if (type === 'success') alertType = 'success';
+  else alertType = 'info';
+  el.className = `alert alert-${alertType} shadow-sm toast-notification toast-${alertType}`;
   el.hidden = false;
   if (timeoutMs > 0) {
     const snap = el.textContent;
@@ -150,6 +157,8 @@ function showPanels(which) {
   setHidden(els.progressCard, which !== 'progress');
   setHidden(els.p2pWaitCard, which !== 'p2pwait');
   setHidden(els.shareCard, which !== 'share');
+  // Hide code card when not in main view
+  setHidden(els.codeCard, which !== 'main');
 }
 
 function updateFileUI() {
@@ -166,7 +175,7 @@ function updateFileUI() {
 function isFileTooLargeForStandard(file) {
   if (!file || !state.uploadEnabled) return false;
   const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
-    ? state.maxSizeMB * 1024 * 1024
+    ? state.maxSizeMB * 1000 * 1000
     : null;
   if (!maxBytes) return false;
   const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
@@ -241,11 +250,11 @@ function updateCapabilitiesUI() {
   // Upload
   if (state.uploadEnabled) {
     const maxText = (state.maxSizeMB === 0)
-      ? 'Max upload size: unlimited'
-      : `Max upload size: ${state.maxSizeMB} MB`;
+      ? 'You can upload files of any size.'
+      : `Max upload size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
-    els.maxUploadHint.textContent = p2pAvailable
+    els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
       ? `${maxText}. Anything over will use direct transfer (P2P).`
       : maxText;
   } else {
@@ -271,11 +280,26 @@ function updateCapabilitiesUI() {
 
   // Encryption
   const canEncrypt = state.uploadEnabled && state.e2ee && window.isSecureContext;
+  const encMessage = $('encryptionMessage');
+  if (encMessage) {
+    if (state.uploadEnabled && state.e2ee && !window.isSecureContext) {
+      encMessage.textContent = 'Encryption requires HTTPS.';
+      encMessage.className = 'encryption-message text-warning';
+    } else if (state.uploadEnabled && !state.e2ee) {
+      encMessage.textContent = 'End-to-End Encryption is not supported on this server.';
+      encMessage.className = 'encryption-message text-body-secondary';
+    } else if (canEncrypt) {
+      encMessage.textContent = 'End-to-End Encryption is recommended.';
+      encMessage.className = 'encryption-message text-success';
+    } else if (!state.uploadEnabled) {
+      encMessage.textContent = '';
+      encMessage.className = 'encryption-message';
+    }
+  }
   if (!canEncrypt) {
     state.encrypt = false;
     setSelected(els.encYes, els.encNo, false);
     setDisabled(els.encYes, true);
-    els.helpEnc.title = state.uploadEnabled && state.e2ee ? 'Requires HTTPS to use Web Crypto.' : 'Not supported on this server.';
   } else {
     setDisabled(els.encYes, false);
   }
@@ -371,9 +395,18 @@ function validateLifetimeInput() {
   return true;
 }
 
-function showProgress({ title, sub, percent, doneBytes, totalBytes, icon }) {
+function showProgress({ title, sub, percent, doneBytes, totalBytes, icon, iconColor }) {
   showPanels('progress');
-  if (icon != null) els.progressIcon.textContent = icon;
+  if (icon != null) {
+    // icon can be a Material icon name or fallback emoji
+    if (typeof icon === 'string' && icon.match(/^[a-z_]+$/)) {
+      const colorClass = iconColor ? ` ${iconColor}` : ' text-primary';
+      els.progressIcon.innerHTML = `<span class="material-icons-round${colorClass}">${icon}</span>`;
+      els.progressIcon.className = `mb-2${colorClass}`;
+    } else {
+      els.progressIcon.textContent = icon;
+    }
+  }
   if (title) els.progressTitle.textContent = title;
   if (sub) els.progressSub.textContent = sub;
   if (typeof percent === 'number') els.progressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
@@ -385,6 +418,8 @@ function showProgress({ title, sub, percent, doneBytes, totalBytes, icon }) {
 function showShare(link) {
   showPanels('share');
   els.shareLink.value = link;
+  // Hide code entry when upload complete
+  if (els.codeCard) setHidden(els.codeCard, true);
 }
 
 function resetToMain() {
@@ -401,8 +436,36 @@ function resetToMain() {
 }
 
 function stopP2P() {
-  try { state.p2pSession?.stop(); } catch {}
+  try { state.p2pSession?.stop(); } catch { }
   state.p2pSession = null;
+}
+
+function showQRModal(url) {
+  if (!els.qrModal || !els.qrCanvas) return;
+
+  const QRCodeStylingCtor = globalThis.QRCodeStyling;
+  if (!QRCodeStylingCtor) {
+    showToast?.('QR generator not loaded.', 'warning');
+    return;
+  }
+
+  // render at a max size; CSS scales it responsively
+  const baseSize = 320;
+
+  const qrCode = new QRCodeStylingCtor({
+    width: baseSize,
+    height: baseSize,
+    type: 'svg',
+    data: url,
+    dotsOptions: { color: '#222222', type: 'rounded' },
+  });
+
+  els.qrCanvas.innerHTML = '';
+  qrCode.append(els.qrCanvas);
+
+  const modalEl = document.getElementById('qrModal');
+  const modal = new window.bootstrap.Modal(modalEl);
+  modal.show();
 }
 
 function copyToClipboard(value) {
@@ -433,7 +496,7 @@ async function startStandardUpload() {
 
   const encrypt = Boolean(state.encrypt);
   const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
-    ? state.maxSizeMB * 1024 * 1024
+    ? state.maxSizeMB * 1000 * 1000
     : null;
   if (maxBytes) {
     const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
@@ -458,7 +521,7 @@ async function startStandardUpload() {
 
   const lifetimeMs = lifetimeMsFromUI();
 
-  showProgress({ title: 'Uploading', sub: 'Preparing…', percent: 0, doneBytes: 0, totalBytes: file.size, icon: '⬆' });
+  showProgress({ title: 'Uploading', sub: 'Preparing…', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
     const result = await client.uploadFile({
@@ -474,17 +537,20 @@ async function startStandardUpload() {
           percent: p,
           doneBytes: Math.floor((p / 100) * file.size),
           totalBytes: file.size,
-          icon: '⬆',
+          icon: 'cloud_upload',
+          iconColor: 'text-primary',
         });
       },
     });
 
-    showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: '⬆' });
+    showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'cloud_upload' });
     showShare(result.downloadUrl);
   } catch (err) {
     console.error(err);
+    showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
+    els.progressCard?.classList.remove('border-primary');
+    els.progressCard?.classList.add('border', 'border-danger');
     showToast(err?.message || 'Upload failed.');
-    showPanels('main');
   }
 }
 
@@ -515,13 +581,13 @@ async function startP2PSendFlow() {
       els.p2pLink.value = link;
     },
     onStatus: ({ message }) => {
-      showProgress({ title: 'Sending…', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: '⇄' });
+      showProgress({ title: 'Sending…', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onProgress: ({ sent, total, percent }) => {
-      showProgress({ title: 'Sending…', sub: 'Transferring…', percent, doneBytes: sent, totalBytes: total, icon: '⇄' });
+      showProgress({ title: 'Sending…', sub: 'Transferring…', percent, doneBytes: sent, totalBytes: total, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
-      showProgress({ title: 'Sending…', sub: 'Done!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: '⇄' });
+      showProgress({ title: 'Sending…', sub: 'Done!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'check_circle', iconColor: 'text-success' });
       setTimeout(() => {
         stopP2P();
         resetToMain();
@@ -530,14 +596,19 @@ async function startP2PSendFlow() {
     },
     onError: (err) => {
       console.error(err);
-      showToast(err?.message || 'Transfer failed.');
+      showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
+      els.p2pWaitCard?.classList.remove('border-primary');
+      els.p2pWaitCard?.classList.add('border', 'border-danger');
       stopP2P();
-      resetToMain();
+      setTimeout(() => {
+        resetToMain();
+        showToast(err?.message || 'Transfer failed.');
+      }, 2000);
     },
   });
 
   els.copyP2PLink.onclick = () => copyToClipboard(els.p2pLink.value).then(() => showToast('Copied link.'));
-  els.openP2PLink.onclick = () => window.open(els.p2pLink.value, '_blank', 'noopener');
+  els.qrP2PLink.onclick = () => showQRModal(els.p2pLink.value);
   els.cancelP2P.onclick = () => {
     stopP2P();
     resetToMain();
@@ -557,6 +628,8 @@ function wireUI() {
     const f = els.fileInput.files?.[0];
     if (!f) return;
     handleFileSelection(f);
+    // Reset the input so the same file can be selected again
+    els.fileInput.value = '';
   });
 
   // Drag & drop
@@ -633,13 +706,8 @@ function wireUI() {
     updateStartEnabled();
   });
 
-  // Help
-  els.helpMode?.addEventListener('click', () => {
-    showToast('Standard uploads store the file on the server. Direct transfer sends the file peer-to-peer (server only brokers the connection).');
-  });
-  els.helpEnc?.addEventListener('click', () => {
-    showToast('Encryption uses a key stored in the URL fragment (#...). The server never sees the decrypted file.');
-  });
+  // Help buttons are integrated into the existing help buttons in HTML
+  // They send tooltips that are handled by the tooltip functionality
 
   // Start
   els.startBtn?.addEventListener('click', async () => {
@@ -655,7 +723,7 @@ function wireUI() {
 
   // Share actions
   els.copyShare?.addEventListener('click', () => copyToClipboard(els.shareLink.value).then(() => showToast('Copied link.')));
-  els.openShare?.addEventListener('click', () => window.open(els.shareLink.value, '_blank', 'noopener'));
+  els.qrShare?.addEventListener('click', () => showQRModal(els.shareLink.value));
   els.newUpload?.addEventListener('click', resetToMain);
 
   // Enter code
@@ -685,6 +753,12 @@ function wireUI() {
   els.codeInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') void goWithCode();
   });
+  els.codeInput?.addEventListener('input', () => {
+    const hasValue = els.codeInput.value.trim().length > 0;
+    setDisabled(els.codeGo, !hasValue);
+  });
+  // Initial state
+  setDisabled(els.codeGo, true);
 
   // Reset on ESC
   window.addEventListener('keydown', (e) => {

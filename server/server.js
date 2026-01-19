@@ -1,3 +1,8 @@
+process.env.ENABLE_P2P = 'false'
+process.env.ENABLE_UPLOAD = 'true';
+process.env.UPLOAD_MAX_FILE_SIZE_MB = 10000000;
+process.env.UPLOAD_ENABLE_E2EE = 'false';
+
 const log = (level, message) => {
     const lvl = String(level || '').toLowerCase();
     const prefix = `[${new Date().toISOString()}] [${String(level).toUpperCase()}]`;
@@ -30,6 +35,11 @@ log('info', `Server name: ${serverName}`);
 const enableWebUI = process.env.ENABLE_WEB_UI !== 'false';
 const enableP2P = process.env.ENABLE_P2P !== 'false';
 const enableUpload = process.env.ENABLE_UPLOAD === 'true';
+if (!enableUpload && !enableP2P) {
+    log('error', 'Both UPLOAD and P2P are disabled. At least one protocol must be enabled for the server to function.');
+    process.exit(1);
+};
+
 log('info', `Web UI Enabled: ${enableWebUI}`);
 log('info', `Peer-to-Peer (P2P) Enabled: ${enableP2P}`);
 log('info', `Upload Protocol Enabled: ${enableUpload}`);
@@ -147,7 +157,7 @@ if (enableUpload) {
     }
 
     maxFileSizeMB = Number(maxFileSizeMB);
-    MAX_FILE_SIZE_BYTES = maxFileSizeMB === 0 ? Infinity : maxFileSizeMB * 1024 * 1024;
+    MAX_FILE_SIZE_BYTES = maxFileSizeMB === 0 ? Infinity : maxFileSizeMB * 1000 * 1000;
     log('info', `UPLOAD_MAX_FILE_SIZE_MB: ${maxFileSizeMB} MB`);
     if (Number(maxFileSizeMB) === 0) {
         log('warn', 'UPLOAD_MAX_FILE_SIZE_MB is set to 0! Files of any size can be uploaded.');
@@ -160,13 +170,13 @@ if (enableUpload) {
     }
 
     maxStorageGB = Number(maxStorageGB);
-    MAX_STORAGE_BYTES = maxStorageGB === 0 ? Infinity : maxStorageGB * 1024 * 1024 * 1024;
+    MAX_STORAGE_BYTES = maxStorageGB === 0 ? Infinity : maxStorageGB * 1000 * 1000 * 1000;
     log('info', `UPLOAD_MAX_STORAGE_GB: ${maxStorageGB} GB`);
     if (Number(maxStorageGB) === 0) {
         log('warn', 'UPLOAD_MAX_STORAGE_GB is set to 0! Consider setting a limit on total storage used by uploaded files to prevent disk exhaustion.');
     }
 
-    if (maxFileSizeMB > (maxStorageGB * 1024) && maxStorageGB !== 0) {
+    if (maxFileSizeMB > (maxStorageGB * 1000) && maxStorageGB !== 0) {
         log('warn', 'UPLOAD_MAX_FILE_SIZE_MB is larger than UPLOAD_MAX_STORAGE_GB! Any uploads larger than the allocated storage quota will be rejected.');
     }
 
@@ -245,19 +255,26 @@ app.use(
 // Static assets (after Helmet so headers apply)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Optional: self-host the PeerJS client if installed.
-// We keep the browser path stable so the Web UI can lazy-load it.
-app.get('/vendor/peerjs.min.js', (req, res) => {
+// Helper to serve vendor files
+const serveVendorFile = (filePath, contentType) => (req, res) => {
     try {
-        const p = path.join(__dirname, 'node_modules', 'peerjs', 'dist', 'peerjs.min.js');
+        const p = path.join(__dirname, 'node_modules', filePath);
         if (!fs.existsSync(p)) return res.status(404).end();
-        res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+        res.setHeader('Content-Type', contentType);
         res.sendFile(p);
     } catch {
         res.status(404).end();
     }
-});
+};
 
+// Self-host the PeerJS client if installed.
+// We keep the browser path stable so the Web UI can lazy-load it.
+app.get('/vendor/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
+
+// Self-host bootstrap CSS/JS from node_modules
+app.get('/vendor/bootstrap.min.css', serveVendorFile('bootstrap/dist/css/bootstrap.min.css', 'text/css; charset=utf-8'));
+app.get('/vendor/bootstrap.min.js', serveVendorFile('bootstrap/dist/js/bootstrap.min.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/qr-code-styling.js', serveVendorFile('qr-code-styling/lib/qr-code-styling.js', 'application/javascript; charset=utf-8'));
 
 const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? process.env.RATE_LIMIT_WINDOW_MS : 60000;
 const rateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS ? process.env.RATE_LIMIT_MAX_REQUESTS : 25;

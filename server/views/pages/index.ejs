@@ -13,10 +13,13 @@
 
   <link rel="icon" href="/assets/favicon.ico" type="image/x-icon" />
   <link rel="shortcut icon" href="/assets/favicon.ico" type="image/x-icon" />
+  <link rel="manifest" href="/manifest.json" />
 
-  <title><%= serverName %></title>
+  <title>
+    <%= serverName %>
+  </title>
 
-  <link href="/assets/bootstrap.min.css" rel="stylesheet" />
+  <link href="/vendor/bootstrap.min.css" rel="stylesheet" />
   <link href="/assets/material-icons-round.css" rel="stylesheet" />
   <link rel="stylesheet" href="/css/bootstrap-base.css" />
   <link rel="stylesheet" href="/css/index.css" />
@@ -24,6 +27,8 @@
 
   <script src="/js/theme.js" defer></script>
   <script src="/js/tooltips.js" defer></script>
+  <script src="/vendor/bootstrap.min.js" defer></script>
+  <script src="/vendor/qr-code-styling.js" defer></script>
   <script type="module" src="/js/page-common.js"></script>
   <script type="module" src="/js/webui-main.js"></script>
 </head>
@@ -32,7 +37,8 @@
   <main>
     <div class="container-main">
       <div id="title-container" class="d-flex align-items-center justify-content-center">
-        <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle" loading="lazy" style="display:block;">
+        <img src="/assets/icon.png" alt="Shadownloader Icon" width="34" height="34" class="me-2 align-middle"
+          loading="lazy" style="display:block;">
         <h1 class="h3 fw-semibold mb-0" style="line-height:1;">Shadownloader</h1>
       </div>
       <p class="lead text-center mb-4">Send a file securely, or enter a sharing code to receive one.</p>
@@ -76,16 +82,15 @@
               <div class="mb-3" id="optUploadMode">
                 <div class="d-flex align-items-center justify-content-between">
                   <div class="form-label fw-semibold mb-1">Upload Mode</div>
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-outline-secondary rounded-circle help-btn"
-                    data-tooltip="Standard uploads to the server. Direct Transfer sends peer-to-peer; you must keep this page open while sending."
-                    aria-label="Upload mode help"
-                  >?</button>
+                  <button type="button" class="help-btn" style="background: none; border: none; cursor: help; color: var(--bs-secondary-color);"
+                    data-tooltip='"Standard" will return a link to share your file. "Direct Transfer" uses peer-to-peer; you must keep this page open while sending.'
+                    aria-label="Upload mode help"><span class="material-icons-round">help</span></button>
                 </div>
                 <div class="btn-group w-100" role="group" aria-label="Upload mode">
-                  <button class="btn btn-outline-primary active" id="modeStandard" type="button" aria-selected="true">Standard</button>
-                  <button class="btn btn-outline-primary" id="modeP2P" type="button" aria-selected="false">Direct Transfer</button>
+                  <button class="btn btn-outline-primary active" id="modeStandard" type="button"
+                    aria-selected="true">Standard</button>
+                  <button class="btn btn-outline-primary" id="modeP2P" type="button" aria-selected="false">Direct
+                    Transfer</button>
                 </div>
               </div>
 
@@ -106,17 +111,16 @@
               <div id="optEncrypt" class="mb-3">
                 <div class="d-flex align-items-center justify-content-between">
                   <div class="form-label fw-semibold mb-1">Enable Encryption?</div>
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-outline-secondary rounded-circle help-btn"
+                  <button type="button" class="help-btn" style="background: none; border: none; cursor: help; color: var(--bs-secondary-color);"
                     data-tooltip="If enabled, the file is encrypted in your browser. The decryption key is only in the URL fragment, so the server never sees it."
-                    aria-label="Encryption help"
-                  >?</button>
+                    aria-label="Encryption help"><span class="material-icons-round">help</span></button>
                 </div>
                 <div class="btn-group w-100" role="group" aria-label="Encryption">
-                  <button class="btn btn-outline-primary active" id="encYes" type="button" aria-selected="true">Yes</button>
+                  <button class="btn btn-outline-primary active" id="encYes" type="button"
+                    aria-selected="true">Yes</button>
                   <button class="btn btn-outline-primary" id="encNo" type="button" aria-selected="false">No</button>
                 </div>
+                <div class="encryption-message" id="encryptionMessage"></div>
               </div>
 
               <div id="p2pInfo" class="alert alert-secondary small py-2" hidden>
@@ -131,7 +135,7 @@
       </div>
 
       <!-- Progress cards -->
-      <div id="progressCard" class="card shadow-sm mt-4" hidden>
+      <div id="progressCard" class="card shadow-sm mt-4 border border-primary" hidden>
         <div class="card-body p-4 text-center">
           <div id="progressIcon" class="text-primary mb-2"><span class="material-icons-round">upload</span></div>
           <h5 class="mb-1" id="progressTitle">Uploading</h5>
@@ -139,11 +143,11 @@
           <div class="progress mt-3" role="progressbar" style="height: 6px;">
             <div id="progressFill" class="progress-bar" style="width: 0%"></div>
           </div>
-          <div class="small text-body-secondary mt-2" id="progressBytes">0 / 0</div>
+          <div class="small text-body-secondary mt-2" id="progressBytes">Starting upload…</div>
         </div>
       </div>
 
-      <div id="p2pWaitCard" class="card shadow-sm mt-4" hidden>
+      <div id="p2pWaitCard" class="card shadow-sm mt-4 border border-primary" hidden>
         <div class="card-body p-4 text-center">
           <div class="text-primary mb-2"><span class="material-icons-round">wifi_tethering</span></div>
           <h5 class="mb-2">Awaiting connection…</h5>
@@ -155,10 +159,10 @@
           <div class="input-group">
             <input class="form-control" id="p2pLink" readonly value="" />
             <button class="btn btn-outline-secondary" id="copyP2PLink" type="button" aria-label="Copy link">
-              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">content_copy</span>
+              <span class="material-icons-round">content_copy</span>
             </button>
-            <button class="btn btn-outline-secondary" id="openP2PLink" type="button" aria-label="Open link">
-              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">open_in_new</span>
+            <button class="btn btn-outline-secondary" id="qrP2PLink" type="button" aria-label="Show QR code">
+              <span class="material-icons-round">qr_code_2</span>
             </button>
           </div>
 
@@ -166,7 +170,7 @@
         </div>
       </div>
 
-      <div id="shareCard" class="card shadow-sm mt-4" hidden>
+      <div id="shareCard" class="card shadow-sm mt-4 border border-success" hidden>
         <div class="card-body p-4 text-center">
           <div class="text-success mb-2"><span class="material-icons-round">check_circle</span></div>
           <h5 class="mb-2">Upload complete</h5>
@@ -175,10 +179,10 @@
           <div class="input-group mt-3">
             <input class="form-control" id="shareLink" readonly value="" />
             <button class="btn btn-outline-secondary" id="copyShare" type="button" aria-label="Copy link">
-              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">content_copy</span>
+              <span class="material-icons-round">content_copy</span>
             </button>
-            <button class="btn btn-outline-secondary" id="openShare" type="button" aria-label="Open link">
-              <span class="material-icons-round" style="font-size: 18px; vertical-align: -4px;">open_in_new</span>
+            <button class="btn btn-outline-secondary" id="qrShare" type="button" aria-label="Show QR code">
+              <span class="material-icons-round">qr_code_2</span>
             </button>
           </div>
 
@@ -187,7 +191,7 @@
       </div>
 
       <!-- Code entry -->
-      <div class="card shadow-sm mt-4">
+      <div class="card shadow-sm mt-4" id="codeCard">
         <div class="card-body p-4">
           <div class="text-center">
             <h2 class="h5 fw-semibold mb-3">Enter Sharing Code</h2>
@@ -195,7 +199,7 @@
           <div class="input-group">
             <input id="codeInput" class="form-control" type="text" placeholder="ABCD-1234 or file id" />
             <button id="codeGo" class="btn btn-primary" type="button" aria-label="Go">
-              <span class="material-icons-round" style="font-size: 20px; vertical-align: -5px;">arrow_forward</span>
+              <span class="material-icons-round">arrow_forward</span>
             </button>
           </div>
         </div>
@@ -203,10 +207,28 @@
     </div>
   </main>
 
+  <!-- QR Code Modal -->
+  <div class="modal fade" id="qrModal" tabindex="-1" aria-labelledby="qrModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm modal-md">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="qrModalLabel">Share via QR Code</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body text-center">
+          <div id="qrContainer" style="display:flex;align-items:center;justify-content:center;">
+            <div id="qrCanvas"></div>
+          </div>
+          <p class="small text-body-secondary mt-3" id="qrHint">Scan with your phone to share the link</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <footer class="footer">
     <div class="container text-center">
       <%= serverName %> <span id="serverVersion"></span> |
-      <a href="https://github.com/WillTDA/Shadownloader" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+        <a href="https://github.com/WillTDA/Shadownloader" target="_blank" rel="noopener noreferrer">View on GitHub</a>
     </div>
   </footer>
 </body>
