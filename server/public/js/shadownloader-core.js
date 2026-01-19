@@ -211,6 +211,13 @@ export async function startP2PSend({
   let transferActive = false;
   let transferCompleted = false;
 
+  const reportProgress = ({ received, total }) => {
+    const safeTotal = Number.isFinite(total) && total > 0 ? total : file.size;
+    const safeReceived = Math.min(Number(received) || 0, safeTotal || 0);
+    const percent = safeTotal ? (safeReceived / safeTotal) * 100 : 0;
+    onProgress?.({ sent: safeReceived, total: safeTotal, percent });
+  };
+
   const stop = () => {
     stopped = true;
     try { activeConn?.close(); } catch {}
@@ -241,6 +248,10 @@ export async function startP2PSend({
       if (!data.t) return;
       if (data.t === 'ready') {
         readyResolve?.();
+        return;
+      }
+      if (data.t === 'progress') {
+        reportProgress({ received: data.received, total: data.total });
         return;
       }
       if (data.t === 'ack' && data.phase === 'end') {
@@ -291,23 +302,25 @@ export async function startP2PSend({
             }
           }
 
-          const percent = total ? (sent / total) * 100 : 0;
-          onProgress?.({ sent, total, percent });
         }
 
         conn.send({ t: 'end' });
-        onProgress?.({ sent: file.size, total: file.size, percent: 100 });
 
-        const ackResult = ackPromise
-          ? await Promise.race([ackPromise, sleep(endAckTimeoutMs).catch(() => null)])
+        const ackTimeoutMs = Number.isFinite(endAckTimeoutMs)
+          ? Math.max(endAckTimeoutMs, Math.ceil(file.size / (1024 * 1024)) * 1000)
           : null;
-        if (ackResult && typeof ackResult === 'object') {
-          onProgress?.({
-            sent: Number(ackResult.received) || file.size,
-            total: Number(ackResult.total) || file.size,
-            percent: 100,
-          });
+        const ackResult = ackPromise
+          ? await Promise.race([ackPromise, sleep(ackTimeoutMs).catch(() => null)])
+          : null;
+        if (!ackResult || typeof ackResult !== 'object') {
+          throw new ShadownloaderNetworkError('Receiver did not confirm completion.');
         }
+        const ackTotal = Number(ackResult.total) || file.size;
+        const ackReceived = Number(ackResult.received) || 0;
+        if (ackTotal && ackReceived < ackTotal) {
+          throw new ShadownloaderNetworkError('Receiver reported an incomplete transfer.');
+        }
+        reportProgress({ received: ackReceived || ackTotal, total: ackTotal });
         transferCompleted = true;
         transferActive = false;
         onComplete?.();
@@ -357,6 +370,9 @@ export async function startP2PReceive({
   let writer = null;
   let total = 0;
   let received = 0;
+  let lastProgressSentAt = 0;
+  const progressIntervalMs = 120;
+  let writeQueue = Promise.resolve();
 
   const stop = () => {
     try { writer?.abort(); } catch {}
@@ -382,6 +398,7 @@ export async function startP2PReceive({
             const name = String(data.name || 'file');
             total = Number(data.size) || 0;
             received = 0;
+            writeQueue = Promise.resolve();
             onMeta?.({ name, total });
 
             if (!streamSaverObj?.createWriteStream) {
@@ -395,6 +412,12 @@ export async function startP2PReceive({
           }
 
           if (data.t === 'end') {
+            await writeQueue;
+            if (total && received < total) {
+              const err = new ShadownloaderNetworkError('Transfer ended before the full file was received.');
+              try { conn.send({ t: 'error', message: err.message }); } catch {}
+              throw err;
+            }
             if (writer) await writer.close();
             onComplete?.({ received, total });
             try { conn.send({ t: 'ack', phase: 'end', received, total }); } catch {}
@@ -409,16 +432,32 @@ export async function startP2PReceive({
 
         if (!writer) return;
 
-        let buf;
-        if (data instanceof ArrayBuffer) buf = new Uint8Array(data);
-        else if (ArrayBuffer.isView(data)) buf = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-        else if (data instanceof Blob) buf = new Uint8Array(await data.arrayBuffer());
-        else return;
+        let bufPromise;
+        if (data instanceof ArrayBuffer) bufPromise = Promise.resolve(new Uint8Array(data));
+        else if (ArrayBuffer.isView(data)) {
+          bufPromise = Promise.resolve(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+        } else if (data instanceof Blob) {
+          bufPromise = data.arrayBuffer().then((buffer) => new Uint8Array(buffer));
+        } else return;
 
-        await writer.write(buf);
-        received += buf.byteLength;
-        const percent = total ? Math.min(100, (received / total) * 100) : 0;
-        onProgress?.({ received, total, percent });
+        writeQueue = writeQueue
+          .then(async () => {
+            const buf = await bufPromise;
+            await writer.write(buf);
+            received += buf.byteLength;
+            const percent = total ? Math.min(100, (received / total) * 100) : 0;
+            onProgress?.({ received, total, percent });
+            const now = Date.now();
+            if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
+              lastProgressSentAt = now;
+              try { conn.send({ t: 'progress', received, total }); } catch {}
+            }
+          })
+          .catch((err) => {
+            try { conn.send({ t: 'error', message: err?.message || 'Receiver write failed.' }); } catch {}
+            onError?.(err);
+            stop();
+          });
       } catch (err) {
         onError?.(err);
         stop();

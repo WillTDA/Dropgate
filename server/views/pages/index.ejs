@@ -173,10 +173,10 @@
       <div id="shareCard" class="card shadow-sm mt-4 border border-success" hidden>
         <div class="card-body p-4 text-center">
           <div class="text-success mb-2"><span class="material-icons-round">check_circle</span></div>
-          <h5 class="mb-2">Upload complete</h5>
-          <div class="text-body-secondary">Share this link with your recipient:</div>
+          <h5 class="mb-2" id="shareTitle">Upload complete</h5>
+          <div class="text-body-secondary" id="shareSub">Share this link with your recipient:</div>
 
-          <div class="input-group mt-3">
+          <div class="input-group mt-3" id="shareLinkGroup">
             <input class="form-control" id="shareLink" readonly value="" />
             <button class="btn btn-outline-secondary" id="copyShare" type="button" aria-label="Copy link">
               <span class="material-icons-round">content_copy</span>
