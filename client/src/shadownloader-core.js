@@ -159,7 +159,7 @@ async function createPeerWithRetries({ code, codeGenerator, maxAttempts, buildPe
         const instance = buildPeer(nextCode);
         instance.on('open', () => resolve(instance));
         instance.on('error', (err) => {
-          try { instance.destroy(); } catch {}
+          try { instance.destroy(); } catch { }
           reject(err);
         });
       });
@@ -220,19 +220,19 @@ export async function startP2PSend({
 
   const stop = () => {
     stopped = true;
-    try { activeConn?.close(); } catch {}
-    try { peer.destroy(); } catch {}
+    try { activeConn?.close(); } catch { }
+    try { peer.destroy(); } catch { }
   };
 
   peer.on('connection', (conn) => {
     if (stopped) return;
     if (activeConn) {
-      try { conn.send({ t: 'error', message: 'Another receiver is already connected.' }); } catch {}
-      try { conn.close(); } catch {}
+      try { conn.send({ t: 'error', message: 'Another receiver is already connected.' }); } catch { }
+      try { conn.close(); } catch { }
       return;
     }
     activeConn = conn;
-    onStatus?.({ phase: 'connected', message: 'Connected. Starting transfer…' });
+    onStatus?.({ phase: 'connected', message: 'Connected. Starting transfer...' });
 
     let readyResolve = null;
     let ackResolve = null;
@@ -273,7 +273,7 @@ export async function startP2PSend({
         const total = file.size;
         const dc = conn?._dc;
         if (dc && Number.isFinite(bufferLowWaterMark)) {
-          try { dc.bufferedAmountLowThreshold = bufferLowWaterMark; } catch {}
+          try { dc.bufferedAmountLowThreshold = bufferLowWaterMark; } catch { }
         }
 
         if (readyPromise) {
@@ -375,8 +375,8 @@ export async function startP2PReceive({
   let writeQueue = Promise.resolve();
 
   const stop = () => {
-    try { writer?.abort(); } catch {}
-    try { peer.destroy(); } catch {}
+    try { writer?.abort(); } catch { }
+    try { peer.destroy(); } catch { }
   };
 
   peer.on('error', (err) => {
@@ -388,7 +388,7 @@ export async function startP2PReceive({
     const conn = peer.connect(code, { reliable: true });
 
     conn.on('open', () => {
-      onStatus?.({ phase: 'connected', message: 'Waiting for file details…' });
+      onStatus?.({ phase: 'connected', message: 'Waiting for file details...' });
     });
 
     conn.on('data', async (data) => {
@@ -407,7 +407,7 @@ export async function startP2PReceive({
             const stream = streamSaverObj.createWriteStream(name, total ? { size: total } : undefined);
             writer = stream.getWriter();
             onProgress?.({ received, total, percent: 0 });
-            try { conn.send({ t: 'ready' }); } catch {}
+            try { conn.send({ t: 'ready' }); } catch { }
             return;
           }
 
@@ -415,12 +415,12 @@ export async function startP2PReceive({
             await writeQueue;
             if (total && received < total) {
               const err = new ShadownloaderNetworkError('Transfer ended before the full file was received.');
-              try { conn.send({ t: 'error', message: err.message }); } catch {}
+              try { conn.send({ t: 'error', message: err.message }); } catch { }
               throw err;
             }
             if (writer) await writer.close();
             onComplete?.({ received, total });
-            try { conn.send({ t: 'ack', phase: 'end', received, total }); } catch {}
+            try { conn.send({ t: 'ack', phase: 'end', received, total }); } catch { }
             return;
           }
 
@@ -450,11 +450,11 @@ export async function startP2PReceive({
             const now = Date.now();
             if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
               lastProgressSentAt = now;
-              try { conn.send({ t: 'progress', received, total }); } catch {}
+              try { conn.send({ t: 'progress', received, total }); } catch { }
             }
           })
           .catch((err) => {
-            try { conn.send({ t: 'error', message: err?.message || 'Receiver write failed.' }); } catch {}
+            try { conn.send({ t: 'error', message: err?.message || 'Receiver write failed.' }); } catch { }
             onError?.(err);
             stop();
           });

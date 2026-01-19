@@ -18,7 +18,7 @@ let received = 0;
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
-  const k = 1000;
+  const k = 1024;
   const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
@@ -65,8 +65,8 @@ async function start() {
     return;
   }
 
-  elTitle.textContent = 'Connecting…';
-  elMsg.textContent = `Connecting to ${code}…`;
+  elTitle.textContent = 'Connecting...';
+  elMsg.textContent = `Connecting to ${code}...`;
 
   let info;
   try {
@@ -91,14 +91,14 @@ async function start() {
       iceServers,
       onStatus: () => {
         elTitle.textContent = 'Connected';
-        elMsg.textContent = 'Waiting for file details…';
+        elMsg.textContent = 'Waiting for file details...';
       },
       onMeta: ({ name, total: nextTotal }) => {
         total = nextTotal;
         received = 0;
         elMeta.hidden = false;
         elMeta.textContent = `Receiving: ${name} (${formatBytes(total)})`;
-        elTitle.textContent = 'Receiving…';
+        elTitle.textContent = 'Receiving...';
         elMsg.textContent = 'Keep this tab open until the transfer completes.';
         setProgress();
       },
@@ -113,7 +113,6 @@ async function start() {
         elTitle.textContent = 'Complete';
         elMsg.textContent = 'Transfer finished.';
         elMeta.textContent = 'Saved to your downloads.';
-        elActions.hidden = false;
         card?.classList.remove('border-primary');
         card?.classList.add('border', 'border-success');
         if (iconContainer) {

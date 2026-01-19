@@ -91,7 +91,7 @@ const coreClient = new ShadownloaderClient({ clientVersion: '0.0.0' });
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
-  const k = 1000;
+  const k = 1024;
   const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
@@ -527,7 +527,7 @@ async function startStandardUpload() {
 
   const lifetimeMs = lifetimeMsFromUI();
 
-  showProgress({ title: 'Uploading', sub: 'Preparing…', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
+  showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
     const result = await client.uploadFile({
@@ -587,10 +587,10 @@ async function startP2PSendFlow() {
       els.p2pLink.value = link;
     },
     onStatus: ({ message }) => {
-      showProgress({ title: 'Sending…', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+      showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onProgress: ({ sent, total, percent }) => {
-      showProgress({ title: 'Sending…', sub: 'Transferring…', percent, doneBytes: sent, totalBytes: total, icon: 'sync_alt', iconColor: 'text-primary' });
+      showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent, doneBytes: sent, totalBytes: total, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
       stopP2P();
