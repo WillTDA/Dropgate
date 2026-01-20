@@ -343,6 +343,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             const lifetimeMs = getLifetimeInMs();
+            saveSettings();
 
             try {
                 const result = await coreClient.uploadFile({
