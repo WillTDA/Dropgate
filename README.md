@@ -1,9 +1,9 @@
 <div align="center">
-   <img alt="Shadownloader Logo" src="./shadownloader.png" style="width:100px;height:auto;margin-bottom:1rem;" />
+  <img alt="Shadownloader Logo" src="./shadownloader.png" style="width:100px;height:auto;margin-bottom:1rem;" />
 
-   # Shadownloader
+  # Shadownloader
 
-   <p style="margin-bottom:1rem;">A privacy-first, end-to-end encrypted file sharing system built for simplicity, security, and self-hosting.</p>
+  <p style="margin-bottom:1rem;">A self-hostable, privacy-first file sharing system with both hosted upload and direct P2P transfer capabilities.</p>
 </div>
 
 <div align="center">
@@ -16,86 +16,58 @@
 
 </div>
 
+## Overview
+Shadownloader offers two ways to share files:
+- Standard uploads: the server stores a file until it is downloaded or expires.
+- Direct transfer (P2P): files move browser-to-browser via WebRTC, with the server only handling signaling.
 
-## 🌍 Overview
+The project ships as:
+- [Shadownloader Client](./client/README.md): an Electron desktop app focused on standard uploads.
+- [Shadownloader Server](./server/README.md): the Node.js backend that hosts the API, Web UI, and P2P signaling.
 
-**Shadownloader** is a modern, privacy-respecting file sharing system composed of two parts:
-- [**Shadownloader Client**](./client/README.md): A lightweight Electron app for uploading, encrypting, and sharing files.
-- [**Shadownloader Server**](./server/README.md): A Node.js backend built to handle secure file delivery, with optional end-to-end encryption and configurable storage.
+## How It Works
+### Standard upload
+- Files are chunked and uploaded to the server.
+- Optional end-to-end encryption uses AES-GCM, with the key stored in the URL hash.
+- Download links look like `https://host/<fileId>` (or `https://host/<fileId>#<key>` for E2EE).
+- Files are deleted after download or when they expire.
 
-In today’s world, privacy and anonymity are more important than ever.  
-Shadownloader was designed to make **secure file sharing accessible**, **transparent**, and **fully self-hostable** — whether on a home NAS, VPS, or Docker container.
+### Direct transfer (P2P)
+- The server hosts a PeerJS signaling endpoint at `/peerjs`.
+- The sender shares a short code like `ABCD-1234` or a link like `https://host/p2p/ABCD-1234`.
+- The file transfers directly between browsers; nothing is stored server-side.
 
+## Key Features
+- Optional end-to-end encryption for standard uploads (keys never reach the server).
+- One-time download links and automatic expiry.
+- Built-in Web UI for sending and receiving without installing anything.
+- Direct transfer (P2P) for large files or zero storage usage.
+- Configurable limits, rate limiting, and logging.
 
-## ✨ Features
-
-- 🔐 **End-to-End Encryption (E2EE)** – Files are encrypted client-side and decrypted only by the recipient.
-- 🕵️ **Privacy First** – No analytics, no tracking, no logging of file contents.
-- ⚙️ **Configurable Server Controls** – Easily tune file size limits, rate limits, and file persistence.
-- 💻 **Cross-Platform Client** – Built with Electron for a smooth experience on Windows, macOS, and Linux.
-- 🧩 **Self-Host Ready** – Deploy with Docker, NGINX, Caddy, Cloudflare Tunnel, or even Tailscale.
-- 🧠 **Lightweight and Fast** – Minimal dependencies and a focus on clean, efficient file transfers.
-
-
-## 🧰 Project Structure
-
+## Project Structure
+```
+/Shadownloader
+  client/    # Electron desktop app (GPL-3.0-only)
+  server/    # Node.js server + Web UI (AGPL-3.0-only)
+  docs/      # Privacy and troubleshooting notes
 ```
 
-/Shadownloader
-├── client/    # Electron-based uploader app (GPL-3.0)
-├── server/    # Node.js-based file server with customisable settings (AGPL-3.0)
+## Getting Started
+- Server setup and configuration: see `server/README.md`.
+- Desktop client usage and builds: see `client/README.md`.
 
-````
+## Docs
+- `docs/PRIVACY.md`
+- `docs/TROUBLESHOOTING.md`
 
+## Licenses
+- Client: GPL-3.0-only. See `client/LICENSE`.
+- Server: AGPL-3.0-only. See `server/LICENSE`.
 
-## 🧩 Getting Started
-
-### Clone the Repository
-```bash
-git clone https://github.com/WillTDA/Shadownloader.git
-cd Shadownloader
-````
-
-### Client
-
-See the [client README](./client/README.md) for setup and build instructions.
-
-### Server
-
-See the [server README](./server/README.md) for configuration, Docker setup, and deployment.
-
-
-## 🔒 Privacy and Security Philosophy
-
-Shadownloader’s design ensures **you stay in control of your data**:
-
-* E2EE ensures that even the server operator cannot read your files.
-* Temporary uploads are securely deleted after download.
-* Self-hosting means your files never touch third-party storage unless *you choose to use it*.
-
-Whether you deploy via Docker, Cloudflare Tunnel, or on your home server,
-Shadownloader keeps your files **private**, **ephemeral**, and **under your control**.
-
-
-## 📜 Licenses
-
-* **Client:** GPL-3.0 License – See [`client/LICENSE`](./client/LICENSE)
-* **Server:** AGPL-3.0 License – See [`server/LICENSE`](./server/LICENSE)
-
-
-## 📖 Acknowledgements
-
-* Logo designed by [TheFuturisticIdiot](https://youtube.com/TheFuturisticIdiot)
-* Built with [Electron](https://www.electronjs.org/) and [Node.js](https://www.nodejs.org/)
-* Inspired by the growing need for privacy-respecting, open file transfer tools
-
-
-## 🙂 Contact Us
-
-* 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Shadownloader/issues)
-* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement)
-
+## Contact
+- Help or chat: https://diamonddigital.dev/discord
+- Bugs: https://github.com/WillTDA/Shadownloader/issues
+- Feature requests: https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement
 
 <div align="center">
   <a href="https://diamonddigital.dev/">

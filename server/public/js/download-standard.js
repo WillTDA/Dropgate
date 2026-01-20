@@ -37,7 +37,7 @@
   function formatBytes(bytes) {
     if (!Number.isFinite(bytes)) return '0 bytes';
     if (bytes === 0) return '0 bytes';
-    const k = 1024;
+    const k = 1000;
     const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     const v = bytes / Math.pow(k, i);

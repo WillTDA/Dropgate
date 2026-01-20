@@ -92,7 +92,7 @@ const coreClient = new ShadownloaderClient({ clientVersion: '0.0.0' });
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
-  const k = 1024;
+  const k = 1000;
   const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
@@ -255,7 +255,7 @@ function updateCapabilitiesUI() {
   if (state.uploadEnabled) {
     const maxText = (state.maxSizeMB === 0)
       ? 'You can upload files of any size.'
-      : `Max upload size: ${formatBytes(state.maxSizeMB * 1024 * 1024)}.`;
+      : `Max upload size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
     els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
@@ -423,11 +423,13 @@ function showProgress({ title, sub, percent, doneBytes, totalBytes, icon, iconCo
   }
 }
 
-function showShare({ link = '', title = 'Upload complete', sub = 'Share this link with your recipient:', showLinkGroup = true } = {}) {
+function showShare({ link = '', title = 'Upload Complete', sub = 'Share this link with your recipient:', showLinkGroup = true } = {}) {
   showPanels('share');
   if (els.shareTitle) els.shareTitle.textContent = title;
   if (els.shareSub) els.shareSub.textContent = sub;
   if (els.shareLinkGroup) setHidden(els.shareLinkGroup, !showLinkGroup);
+  els.shareCard.classList.remove('border-danger', 'border-success', 'border-primary');
+  els.shareCard.classList.add('border', 'border-success');
   els.shareLink.value = link || '';
   // Hide code entry when upload complete
   if (els.codeCard) setHidden(els.codeCard, true);
@@ -604,11 +606,10 @@ async function startP2PSendFlow() {
     onComplete: () => {
       stopP2P();
       showShare({
-        title: 'Transfer complete',
+        title: 'Transfer Complete',
         sub: 'Your recipient has received the file.',
         showLinkGroup: false,
       });
-      showToast('Transfer complete.', 'success');
     },
     onError: (err) => {
       console.error(err);

@@ -1,14 +1,31 @@
-process.env.ENABLE_UPLOAD = process.env.ENABLE_UPLOAD || 'true';
+const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
+const normalizeLogLevel = (value) => {
+    const upper = String(value || '').trim().toUpperCase();
+    return LOG_LEVELS[upper] !== undefined ? upper : 'INFO';
+};
+const rawLogLevel = process.env.LOG_LEVEL;
+const LOG_LEVEL = normalizeLogLevel(rawLogLevel || 'INFO');
+const LOG_LEVEL_NUM = LOG_LEVELS[LOG_LEVEL];
+
+const shouldLog = (level) => {
+    const normalized = normalizeLogLevel(level);
+    return LOG_LEVELS[normalized] <= LOG_LEVEL_NUM;
+};
 
 const log = (level, message) => {
-    const lvl = String(level || '').toLowerCase();
-    const prefix = `[${new Date().toISOString()}] [${String(level).toUpperCase()}]`;
+    const normalized = normalizeLogLevel(level);
+    if (!shouldLog(normalized)) return;
+    const prefix = `[${new Date().toISOString()}] [${normalized}]`;
     const out = `${prefix} ${message}`;
-    if (lvl === 'error') return console.error(out);
-    if (lvl === 'warn') return console.warn(out);
-    if (lvl === 'info') return console.info(out);
-    return console.log(out);
+    if (normalized === 'ERROR') return console.error(out);
+    if (normalized === 'WARN') return console.warn(out);
+    if (normalized === 'INFO') return console.info(out);
+    return console.debug(out);
 };
+
+if (rawLogLevel && normalizeLogLevel(rawLogLevel) === 'INFO' && String(rawLogLevel).trim().toUpperCase() !== 'INFO') {
+    log('warn', 'Invalid LOG_LEVEL value. Defaulting to INFO.');
+}
 
 log('info', 'Shadownloader Server is starting...');
 
@@ -37,12 +54,11 @@ if (!enableUpload && !enableP2P) {
     process.exit(1);
 };
 
-log('info', `Web UI Enabled: ${enableWebUI}`);
-log('info', `Peer-to-Peer (P2P) Enabled: ${enableP2P}`);
 log('info', `Upload Protocol Enabled: ${enableUpload}`);
+log('info', `Peer-to-Peer (P2P) Enabled: ${enableP2P}`);
+log('info', `Web UI Enabled: ${enableWebUI}`);
 
 // ===== P2P (WebRTC) configuration exposed to clients via /api/info =====
-// PeerServer mount path is fixed: /peerjs (no environment variable by design).
 const PEERJS_MOUNT_PATH = '/peerjs';
 
 const parseList = (raw) => {
@@ -62,7 +78,7 @@ const p2pIceServers = [];
 if (p2pStunUrls.length) p2pIceServers.push({ urls: p2pStunUrls });
 
 const uploadEnableE2EE = process.env.UPLOAD_ENABLE_E2EE !== 'false';
-log('info', `Upload End-to-End Encryption (E2EE) Enabled: ${uploadEnableE2EE}`);
+if (enableUpload) log('info', `Upload End-to-End Encryption (E2EE) Enabled: ${uploadEnableE2EE}`);
 
 if (enableUpload && uploadEnableE2EE) {
     log('warn', 'Upload E2EE is enabled. The server MUST be running behind a reverse proxy that provides a secure HTTPS connection.');
@@ -183,7 +199,7 @@ if (enableUpload) {
     currentDiskUsage = getDirSize(uploadDir);
     setInterval(() => { currentDiskUsage = getDirSize(uploadDir); }, 300000); // Sync every 5 minutes in case of discrepancies
     if (maxStorageGB !== 0) {
-        log('info', `Current disk usage: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB`);
+        log('info', `Current disk usage: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB`);
     }
 
     fileDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'file-database.json')) : new Map();
@@ -281,7 +297,10 @@ if (Number(rateLimitMaxRequests) > 0 && Number(rateLimitWindowMs) > 0) {
         max: Number(rateLimitMaxRequests),
         standardHeaders: true,
         legacyHeaders: false,
-        message: { error: 'Too many requests, please try again later.' },
+        handler: (_req, res) => {
+            log('warn', 'Rate limit triggered. Request blocked.');
+            res.status(429).json({ error: 'Too many requests, please try again later.' });
+        },
     });
 }
 
@@ -305,7 +324,7 @@ if (enableUpload) {
         const { filename, lifetime, isEncrypted, totalSize, totalChunks } = req.body;
 
         if (isEncrypted && !uploadEnableE2EE) {
-            log('warn', 'Rejected an E2EE upload attempt because upload E2EE is disabled on the server.');
+            log('debug', 'Rejected an E2EE upload attempt because upload E2EE is disabled on the server.');
             return res.status(400).json({ error: 'End-to-end encryption is not supported on this server.' });
         }
 
@@ -351,7 +370,7 @@ if (enableUpload) {
         ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
 
         if ((currentDiskUsage + reservedSpace + size) > MAX_STORAGE_BYTES) {
-            log('warn', `Upload rejected due to insufficient storage. Current usage: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB, Reserved: ${(reservedSpace / 1024 / 1024 / 1024).toFixed(2)} GB, Requested: ${(size / 1024 / 1024 / 1024).toFixed(2)} GB.`);
+            log('debug', `Upload rejected due to insufficient storage. Current usage: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB, Reserved: ${(reservedSpace / 1000 / 1000 / 1000).toFixed(2)} GB, Requested: ${(size / 1000 / 1000 / 1000).toFixed(2)} GB.`);
             return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
         }
 
@@ -377,7 +396,7 @@ if (enableUpload) {
             expiresAt: Date.now() + (2 * 60 * 1000) // 2 minute initial deadline
         });
 
-        log('info', `Initialised upload. Reserved ${(size / 1024 / 1024).toFixed(2)} MB.`);
+        log('debug', `Initialised upload. Reserved ${(size / 1000 / 1000).toFixed(2)} MB.`);
         res.status(200).json({ uploadId });
     });
 
@@ -407,7 +426,7 @@ if (enableUpload) {
         req.on('data', (chunk) => chunks.push(chunk));
         req.on('end', () => {
             const buffer = Buffer.concat(chunks);
-            log('info', `Received chunk ${chunkIndex + 1}/${session.totalChunks} for: ${uploadId}. Size: ${(buffer.length / 1024).toFixed(2)} KB`);
+            log('debug', `Received chunk ${chunkIndex + 1}/${session.totalChunks}. Size: ${(buffer.length / 1000).toFixed(2)} KB`);
 
             // 1. Verify Size (5MB + Overhead limit)
             if (buffer.length > (5 * 1024 * 1024) + 1024) return res.status(413).send('Chunk too large.');
@@ -446,7 +465,7 @@ if (enableUpload) {
         // 1. Verify Chunk Count
         // We expect exactly N unique chunks.
         if (session.receivedChunks.size !== session.totalChunks) {
-            log('warn', `Upload ${uploadId} incomplete: ${session.receivedChunks.size}/${session.totalChunks} chunks.`);
+            log('debug', `Upload incomplete: ${session.receivedChunks.size}/${session.totalChunks} chunks.`);
 
             return res.status(400).json({
                 error: `Upload incomplete. Server received ${session.receivedChunks.size} of ${session.totalChunks} chunks.`
@@ -460,12 +479,12 @@ if (enableUpload) {
         try {
             const stats = fs.statSync(uploadInfo.tempFilePath);
             if (stats.size === 0) {
-                log('warn', `Rejected 0-byte file upload for ID: ${uploadId}`);
+                log('debug', 'Rejected 0-byte file upload.');
                 fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the empty temp file
                 ongoingUploads.delete(uploadId);
                 return res.status(400).json({ error: 'Empty files (0 bytes) cannot be uploaded.' });
             } else if (stats.size !== uploadInfo.totalSize) {
-                log('warn', `Upload size mismatch for ID: ${uploadId}. Expected: ${uploadInfo.totalSize}, Actual: ${stats.size}`);
+                log('debug', `Upload size mismatch. Expected: ${uploadInfo.totalSize}, Actual: ${stats.size}`);
                 fs.rmSync(uploadInfo.tempFilePath, { force: true }); // Clean up the invalid temp file
                 ongoingUploads.delete(uploadId);
                 return res.status(400).json({ error: 'Uploaded rejected. File size does not match expected size.' });
@@ -492,7 +511,7 @@ if (enableUpload) {
         });
 
         ongoingUploads.delete(uploadId); // Remove the reservation
-        log('info', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
+        log('debug', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
         res.status(200).json({ id: fileId });
     });
 
@@ -559,7 +578,7 @@ if (enableUpload) {
 
             fs.rm(fileInfo.path, { force: true }, () => { });
             fileDatabase.delete(fileId);
-            log('info', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1024 / 1024 / 1024).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
+            log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent and deleted.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
         });
     });
 }
@@ -572,16 +591,19 @@ apiRouter.get('/info', limiter, (req, res) => {
         e2ee: enableUpload ? uploadEnableE2EE : undefined,
     };
 
+    const p2pCapabilities = {
+        enabled: enableP2P,
+        peerjsPath: enableP2P ? PEERJS_MOUNT_PATH : undefined,
+        iceServers: enableP2P ? p2pIceServers : undefined,
+    };
+
     res.status(200).json({
         name: serverName,
         version: version,
+        logLevel: LOG_LEVEL,
         capabilities: {
             upload: uploadCapabilities,
-            p2p: {
-                enabled: enableP2P,
-                peerjsPath: PEERJS_MOUNT_PATH,
-                iceServers: p2pIceServers,
-            },
+            p2p: p2pCapabilities,
             webUI: {
                 enabled: enableWebUI
             }
@@ -695,13 +717,13 @@ if (enableUpload) {
 
         if (fileInfo.isEncrypted) {
             if (!uploadEnableE2EE) {
-                log('warn', 'Blocked access to an encrypted file because upload E2EE is disabled.');
+                log('debug', 'Blocked access to an encrypted file because upload E2EE is disabled.');
                 return res.status(404).render('pages/404', { serverName });
             }
 
             // The Web Crypto API requires a secure context (HTTPS).
             if (req.protocol !== 'https') {
-                log('warn', 'Blocked access to an encrypted file over an insecure connection (HTTP).');
+                log('debug', 'Blocked access to an encrypted file over an insecure connection (HTTP).');
                 return res.status(400).render('pages/insecure', { serverName });
             }
         }
@@ -719,7 +741,7 @@ if (enableUpload) {
         const allFiles = preserveUploads ? fileDatabase.getAll() : Array.from(fileDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
         for (const record of allFiles) {
             if (record.value?.expiresAt && record.value.expiresAt < now) {
-                log('info', 'File expired. Deleting...');
+                log('debug', 'File expired. Deleting...');
                 try {
                     const stats = fs.statSync(record.value.path);
                     currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
@@ -734,7 +756,7 @@ if (enableUpload) {
         const now = Date.now();
         for (const [id, session] of ongoingUploads.entries()) {
             if (now > session.expiresAt) {
-                log('info', `Cleaning zombie upload: ${id}`);
+                log('debug', 'Cleaning zombie upload.');
                 try {
                     fs.rmSync(session.tempFilePath, { force: true });
                 } catch (e) { }

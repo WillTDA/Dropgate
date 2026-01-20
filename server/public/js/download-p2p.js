@@ -14,11 +14,12 @@ const code = document.body.dataset.code;
 
 let total = 0;
 let received = 0;
+let transferCompleted = false;
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
-  const k = 1024;
+  const k = 1000;
   const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
@@ -109,11 +110,12 @@ async function start() {
         setProgress();
       },
       onComplete: () => {
+        transferCompleted = true;
         const card = document.getElementById('status-card');
         const iconContainer = document.getElementById('icon-container');
-        elTitle.textContent = 'Complete';
-        elMsg.textContent = 'Transfer finished.';
-        elMeta.textContent = 'Saved to your downloads.';
+        elTitle.textContent = 'Transfer Complete';
+        elMsg.textContent = 'Success!';
+        elMeta.textContent = 'The file has been saved to your downloads.';
         card?.classList.remove('border-primary');
         card?.classList.add('border', 'border-success');
         if (iconContainer) {
@@ -122,10 +124,12 @@ async function start() {
         }
       },
       onError: (err) => {
+        if (transferCompleted) return;
         console.error(err);
         showError('Transfer Error', 'An error occurred during the transfer.');
       },
       onDisconnect: () => {
+        if (transferCompleted) return;
         showError('Disconnected', 'The sender disconnected before the transfer finished.');
       },
     });
