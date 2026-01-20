@@ -28,6 +28,7 @@ if (rawLogLevel && normalizeLogLevel(rawLogLevel) === 'INFO' && String(rawLogLev
 }
 
 log('info', 'Dropgate Server is starting...');
+log('info', `Log level: ${LOG_LEVEL}`);
 
 const { version } = require('./package.json');
 const path = require('path');
@@ -44,7 +45,7 @@ const { FSDB } = require('file-system-db');
 const { v4: uuidv4 } = require('uuid');
 
 const serverName = process.env.SERVER_NAME || 'Dropgate Server';
-log('info', `Server name: ${serverName}`);
+log('info', `Server Name: ${serverName}`);
 
 const enableWebUI = process.env.ENABLE_WEB_UI !== 'false';
 const enableP2P = process.env.ENABLE_P2P !== 'false';
@@ -86,7 +87,10 @@ if (enableUpload && uploadEnableE2EE) {
 }
 
 if (enableP2P) {
-    log('warn', 'P2P direct transfer requires a secure HTTPS context in browsers (localhost is the only exception).');
+    log('warn', 'P2P is enabled. The server MUST be running behind a reverse proxy that provides HTTPS.');
+    log('warn', 'Failure to provide a secure context will prevent P2P transfers from working in browsers.');
+    log('info', `P2P_STUN_SERVERS: ${p2pStunUrls.length ? p2pStunUrls.join(', ') : 'None'}`);
+    log('info', `PeerJS Debug Logging: ${process.env.PEERJS_DEBUG === 'true'}`);
 }
 
 const app = express();
