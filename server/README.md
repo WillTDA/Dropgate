@@ -3,7 +3,7 @@
 
    # Shadownloader Server
 
-   <p style="margin-bottom:1rem;">A Node.js-based backend to facilitate secure, privacy-focused file sharing.</p>
+   <p style="margin-bottom:1rem;">A Node.js-based backend for secure, privacy-focused file sharing with optional end-to-end encryption support.</p>
 </div>
 
 <div align="center">
@@ -14,15 +14,36 @@
 
 </div>
 
-## Overview
-Shadownloader Server provides the API, Web UI, and PeerJS signaling. It supports:
-- Standard uploads with optional end-to-end encryption (E2EE).
-- Direct transfer (P2P) between browsers using WebRTC.
-- One-time download links and configurable expiry.
 
-The server listens on port `52443` and is designed to sit behind a reverse proxy for HTTPS.
+## 🌍 Overview
 
-## Quick Start (Manual)
+The **Shadownloader Server** powers the backend of the system.
+It can be self-hosted easily on:
+- Home servers / NAS boxes
+- VPS instances
+- Docker containers
+- Tunnelled/reverse-proxied setups (Cloudflare Tunnel, Tailscale, etc.)
+
+Shadownloader supports **two ways to share files**:
+
+- **Hosted uploads (classic mode)** — you upload a file, share a link, and the server holds it temporarily.
+- **Direct transfer (P2P)** — when enabled, files can transfer device-to-device, with the server only helping peers connect.
+
+When running with **E2EE**, the server acts as a **blind data relay** — the contents are unreadable without the client-side decryption key.
+
+
+## 🧩 Defaults (important!)
+
+Out of the box, the server is conservative:
+- ✅ Web UI is enabled
+- ✅ Direct Transfer (P2P) is enabled
+- ❌ Hosted uploads are disabled (you must opt in)
+
+This means you can spin it up, try the Web UI, and choose what features you want to allow.
+
+
+## 🚀 Quick Start (Manual)
+
 ```bash
 git clone https://github.com/WillTDA/Shadownloader.git
 cd Shadownloader/server
@@ -30,18 +51,22 @@ npm install
 npm start
 ```
 
-Uploads are disabled by default. To enable the standard upload protocol:
+Enable hosted uploads:
+
+```bash
+ENABLE_UPLOAD=true npm start
+```
+
+(Windows PowerShell)
 
 ```powershell
 $env:ENABLE_UPLOAD="true"
 npm start
 ```
 
-```bash
-ENABLE_UPLOAD=true npm start
-```
 
-## Docker
+## 🐳 Running with Docker
+
 ```bash
 docker run -d \
   -p 52443:52443 \
@@ -54,63 +79,129 @@ docker run -d \
   willtda/shadownloader-server:latest
 ```
 
-If you want uploads to persist across restarts, map `uploads/` to a volume and set `UPLOAD_PRESERVE_UPLOADS=true`.
+If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a path on the host machine and set `UPLOAD_PRESERVE_UPLOADS=true`.
 
-## Environment Variables
+
+## ⚙️ Environment Variables
+
+### General
+
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SERVER_NAME` | `Shadownloader Server` | Display name used in the Web UI and `/api/info`. |
-| `ENABLE_UPLOAD` | `false` | Enables the standard upload protocol and routes. |
-| `ENABLE_P2P` | `true` | Enables direct transfer (P2P) and PeerJS signaling. |
+| `SERVER_NAME` | `Shadownloader Server` | Display name used by the Web UI and `GET /api/info`. |
 | `ENABLE_WEB_UI` | `true` | Enables the Web UI at `/`. |
-| `P2P_STUN_SERVERS` | `stun:stun.cloudflare.com:3478` | Comma or space separated STUN servers for WebRTC. |
-| `PEERJS_DEBUG` | `false` | Enables verbose PeerJS logs. |
-| `UPLOAD_ENABLE_E2EE` | `true` | Enables end-to-end encryption for standard uploads. |
-| `UPLOAD_PRESERVE_UPLOADS` | `false` | Persist uploads across restarts (uses `uploads/db/`). |
-| `UPLOAD_MAX_FILE_SIZE_MB` | `100` | Max file size in MB (0 = unlimited). |
-| `UPLOAD_MAX_STORAGE_GB` | `10` | Max total storage in GB (0 = unlimited). |
-| `UPLOAD_MAX_FILE_LIFETIME_HOURS` | `24` | Max file lifetime in hours (0 = unlimited). |
-| `UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS` | `300000` | Cleanup interval for incomplete uploads (0 = disabled). |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in milliseconds (0 = disabled). |
-| `RATE_LIMIT_MAX_REQUESTS` | `25` | Requests per window (0 = disabled). |
 | `LOG_LEVEL` | `INFO` | `NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`. |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in milliseconds (`0` disables rate limiting). |
+| `RATE_LIMIT_MAX_REQUESTS` | `25` | Requests allowed per window (`0` disables rate limiting). |
 
-Note: the PeerJS mount path is fixed at `/peerjs`.
+### Hosted Uploads (classic mode)
 
-## Endpoints and URLs
-- Web UI: `GET /`
-- Server info: `GET /api/info`
-- Resolve a share code or URL: `POST /api/resolve` with `{ "value": "..." }`
-- Standard uploads: `POST /upload/init`, `POST /upload/chunk`, `POST /upload/complete`
-- File metadata: `GET /api/file/:fileId/meta`
-- One-time download stream: `GET /api/file/:fileId`
-- Download page: `GET /:fileId`
-- Direct transfer page: `GET /p2p/:code`
-- PeerJS signaling: `GET /peerjs`
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ENABLE_UPLOAD` | `false` | Enables the hosted upload protocol and routes. |
+| `UPLOAD_ENABLE_E2EE` | `true` | Enables end-to-end encryption for hosted uploads (keys stay client-side). |
+| `UPLOAD_PRESERVE_UPLOADS` | `false` | Persist uploads across restarts (uses `uploads/db/`). |
+| `UPLOAD_MAX_FILE_SIZE_MB` | `100` | Max file size in MB (`0` = unlimited). |
+| `UPLOAD_MAX_STORAGE_GB` | `10` | Max total storage in GB (`0` = unlimited). |
+| `UPLOAD_MAX_FILE_LIFETIME_HOURS` | `24` | Max file lifetime in hours (`0` = unlimited). |
+| `UPLOAD_ZOMBIE_CLEANUP_INTERVAL_MS` | `300000` | Cleanup interval for incomplete uploads (`0` = disabled). |
 
-## Storage and Lifecycle
+### Direct Transfer (P2P)
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ENABLE_P2P` | `true` | Enables direct transfer (P2P). |
+| `P2P_STUN_SERVERS` | `stun:stun.cloudflare.com:3478` | Comma/space separated STUN servers for WebRTC. |
+| `PEERJS_DEBUG` | `false` | Enables verbose PeerJS logs. |
+
+
+## 🧾 Server Info Endpoint
+
+You can sanity-check your server and see what it supports via:
+
+- `GET /api/info`
+
+Example response:
+
+```json
+{
+  "name": "Shadownloader Server",
+  "version": "2.0.0",
+  "logLevel": "INFO",
+  "capabilities": {
+    "upload": {
+      "enabled": true,
+      "maxSizeMB": 100,
+      "maxLifetimeHours": 24,
+      "e2ee": true
+    },
+    "p2p": {
+      "enabled": true,
+      "peerjsPath": "/peerjs",
+      "iceServers": [
+        {
+          "urls": [
+            "stun:stun.cloudflare.com:3478"
+          ]
+        }
+      ],
+      "peerjsDebugLogging": false
+    },
+    "webUI": {
+      "enabled": true
+    }
+  }
+}
+```
+
+
+## 🔒 HTTPS / Reverse Proxy Setup
+
+For **E2EE** and **Direct Transfer (P2P)** in browsers, you generally want HTTPS (localhost is the common exception).
+Run the server behind a reverse proxy that terminates TLS:
+
+* [NGINX](https://nginx.org/)
+* [Caddy](https://caddyserver.com/)
+* [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)
+* [Tailscale Funnel](https://tailscale.com/kb/1223/funnel/)
+
+
+## 🗄️ Storage and Lifecycle
+
 - Uploaded files live in `server/uploads`.
-- Files are deleted after the first successful download.
-- Expired files are cleaned up automatically.
-- When `UPLOAD_PRESERVE_UPLOADS=false`, uploads are cleared on startup and shutdown.
+- Files can be configured to expire automatically.
+- Files are be removed after the first successful download.
+- Incomplete uploads are cleaned up on an interval.
 
-## HTTPS and Reverse Proxies
-Encrypted downloads and P2P transfers require HTTPS (localhost is the only exception). Run the server behind a reverse proxy that terminates TLS:
-- NGINX
-- Caddy
-- Cloudflare Tunnel
-- Tailscale Funnel
 
-## Logging and Privacy
-See `docs/PRIVACY.md` for log levels and data handling details, and `docs/TROUBLESHOOTING.md` for debug tips.
+## 🔎 Logging and Privacy
 
-## License
-Licensed under the AGPL-3.0-only License. See `server/LICENSE` for details.
+Shadownloader tries to keep logs **minimal and transparent**.
+For the full breakdown of what gets logged (and what doesn’t), see:
 
-## Contact
-- Help or chat: https://diamonddigital.dev/discord
-- Bugs: https://github.com/WillTDA/Shadownloader/issues
-- Feature requests: https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement
+- [`docs/PRIVACY.md`](../docs/PRIVACY.md)
+
+If you’re debugging a problem, temporarily enable `LOG_LEVEL=DEBUG`, reproduce the issue, then turn it back down.
+
+
+## 📜 License
+
+Licensed under the **AGPL-3.0 License**.
+See the [LICENSE](./LICENSE) file for details.
+
+
+## 📖 Acknowledgements
+
+* Logo designed by [TheFuturisticIdiot](https://youtube.com/TheFuturisticIdiot)
+* Built with [Node.js](https://www.nodejs.org/)
+* Inspired by the growing need for privacy-respecting, open file transfer tools
+
+
+## 🙂 Contact Us
+
+* 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Shadownloader/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement)
 
 <div align="center">
   <a href="https://diamonddigital.dev/">

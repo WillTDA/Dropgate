@@ -199,7 +199,7 @@ if (enableUpload) {
     currentDiskUsage = getDirSize(uploadDir);
     setInterval(() => { currentDiskUsage = getDirSize(uploadDir); }, 300000); // Sync every 5 minutes in case of discrepancies
     if (maxStorageGB !== 0) {
-        log('info', `Current disk usage: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB`);
+        log('info', `Current server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB`);
     }
 
     fileDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'file-database.json')) : new Map();
@@ -595,6 +595,7 @@ apiRouter.get('/info', limiter, (req, res) => {
         enabled: enableP2P,
         peerjsPath: enableP2P ? PEERJS_MOUNT_PATH : undefined,
         iceServers: enableP2P ? p2pIceServers : undefined,
+        peerjsDebugLogging: enableP2P ? (process.env.PEERJS_DEBUG === 'true') : undefined,
     };
 
     res.status(200).json({

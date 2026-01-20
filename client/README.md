@@ -12,44 +12,73 @@
 ![version](https://img.shields.io/badge/version-2.0.0-brightgreen?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 
-[![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
-[![buy me a coffee](https://img.shields.io/badge/-Buy%20Me%20a%20Coffee-ffdd00?logo=Buy%20Me%20A%20Coffee&logoColor=000000&style=flat-square)](https://www.buymeacoffee.com/willtda)
+[![discord](https://img.shields.io/discord/667479986214666272?logo=discord\&logoColor=white\&style=flat-square)](https://diamonddigital.dev/discord)
+[![buy me a coffee](https://img.shields.io/badge/-Buy%20Me%20a%20Coffee-ffdd00?logo=Buy%20Me%20A%20Coffee\&logoColor=000000\&style=flat-square)](https://www.buymeacoffee.com/willtda)
 
 </div>
 
-## Overview
-Shadownloader Client is a lightweight desktop uploader for the server. It uses the same API as the Web UI and checks server capabilities before uploading.
 
-## Features
-- Chunked uploads with progress reporting.
-- Optional end-to-end encryption (AES-GCM). Keys stay in the URL hash.
-- File lifetime controls (minutes, hours, days, or unlimited within server limits).
-- Server compatibility checks via `/api/info`.
-- Copies the final download link to the clipboard.
-- Windows context menu integration for background uploads.
+## 🌍 Overview
 
-## Installation
-1. Download the latest release from https://github.com/WillTDA/Shadownloader/releases.
-2. Install or extract the app for your OS.
-3. Launch the client and set your server URL.
+**Shadownloader Client** is the desktop way to upload and share files through a Shadownloader Server.
+It’s built to feel simple: pick a file, choose your options, hit upload, and share the link.
 
-## Usage
-1. Enter the server URL (for example `https://files.example.com`).
-2. Select a file or drag it into the app.
-3. Choose lifetime and E2EE options (if supported).
-4. Click Upload. The link is copied to your clipboard.
 
-### Windows context menu
-After installing the Windows build, right-click a file and choose:
-- "Share with Shadownloader"
-- "Share with Shadownloader (E2EE)"
+## ✨ Features
 
-Uploads run in the background and copy the link to the clipboard when finished.
+* 🔒 **End-to-End Encryption (E2EE)** | Encrypt on your device before upload, decrypt on the recipient’s device. The server doesn’t need your key.
 
-## Direct Transfer (P2P)
-The desktop client focuses on standard uploads. Direct transfer is available in the server Web UI at `https://your-host/`.
+* 🌐 **Server Agnostic** | Connect to any compatible Shadownloader Server — whether it’s self-hosted at home, deployed via Docker, or behind a reverse proxy.
 
-## Development
+* 🧱 **Privacy by Design** | No telemetry, no analytics, and no personal identifiers. Your data stays between you and your chosen server.
+
+* 🖥️ **Cross-Platform Support** | Available for Windows, macOS, and Linux.
+
+* ⚡ **Fast, Lightweight Interface** | Simple drag-and-drop UI focused on minimalism and clarity.
+
+* 🧩 **Smart Compatibility Checks** | The client reads server capabilities (limits, encryption support, etc.) so you don’t run into surprises mid-upload.
+
+* 🪟 **Windows Context Menu Integration** | Right-click a file and upload in the background.
+
+
+## 📦 Installation
+
+To install Shadownloader Client:
+
+1. Download the latest release for your OS from the [releases page](https://github.com/WillTDA/Shadownloader/releases).
+2. Extract or install the app as you would any other desktop app.
+3. Launch the client and connect to your preferred server.
+
+
+## 🚀 Usage
+
+### Sending a file
+
+1. **Launch** the client.
+2. **Enter the server address** you want to connect to (for example, your home server or a private Shadownloader instance).
+3. **Select a file** to upload (or drag and drop it into the window).
+4. **Choose your options** (E2EE and file lifetime, depending on what the server allows).
+5. **Hit upload!** When it finishes, the **download link is copied to your clipboard**.
+
+**Protip (Windows):** Right-click a file and choose either **"Share with Shadownloader"** or **"Share with Shadownloader (E2EE)"** to upload silently in the background.
+
+### Receiving a file
+
+1. Open your web browser.
+2. Paste the download link into the address bar.
+3. Download as usual. If the file is end-to-end encrypted, decryption happens locally on your device.
+
+
+## 🌐 Direct Transfer (P2P)
+
+The desktop client focuses on the classic hosted-upload flow.
+If your server has **Direct Transfer (P2P)** enabled, you can use it from the server’s **Web UI** in your browser.
+
+
+## 🛠️ Development
+
+To set up a development environment:
+
 ```bash
 git clone https://github.com/WillTDA/Shadownloader.git
 cd Shadownloader/client
@@ -57,20 +86,48 @@ npm install
 npm start
 ```
 
-## Building
+
+## 🏗️ Building
+
+To build the client for your platform:
+
 ```bash
 npm run build
 ```
 
 Distributable binaries will appear in the `dist` folder.
 
-## License
-Shadownloader Client is licensed under the GPL-3.0-only License. See `client/LICENSE` for details.
 
-## Contact
-- Help or chat: https://diamonddigital.dev/discord
-- Bugs: https://github.com/WillTDA/Shadownloader/issues
-- Feature requests: https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement
+## 🔌 Self-Hosting & Networking
+
+Shadownloader Client works seamlessly with **self-hosted Shadownloader Servers**, which you can run from your own **home server**, **NAS**, or **cloud VPS**.
+
+It plays nicely with common setups like:
+
+* 🌐 **NGINX** or **Caddy** reverse proxies
+* ☁️ **Cloudflare Tunnel**
+* 🔒 **Tailscale** private networks
+
+
+## 📜 License
+
+Shadownloader Client is licensed under the **GPL-3.0 License**.
+See the [LICENSE](./LICENSE) file for details.
+
+
+## 📖 Acknowledgements
+
+* Logo designed by [TheFuturisticIdiot](https://youtube.com/TheFuturisticIdiot)
+* Built with [Electron](https://www.electronjs.org/)
+* Inspired by the growing need for privacy-respecting, open file transfer tools
+
+
+## 🙂 Contact Us
+
+* 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Shadownloader/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement)
+
 
 <div align="center">
   <a href="https://diamonddigital.dev/">
