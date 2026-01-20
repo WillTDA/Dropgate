@@ -206,8 +206,8 @@ if (enableUpload) {
     ongoingUploads = new Map();
     log('info', `File database is ready. (${preserveUploads ? 'persistent' : 'in-memory'})`);
 } else {
-    log('info', 'Upload protocol disabled. Removing upload storage directories if present.');
-    fs.rmSync(uploadDir, { recursive: true, force: true });
+    log('info', 'Upload protocol disabled. Cleaning up upload directory...');
+    cleanupDir(uploadDir);
 }
 log('info', 'Configuring server endpoints and middleware...');
 
