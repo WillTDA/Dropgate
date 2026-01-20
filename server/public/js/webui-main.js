@@ -1,11 +1,11 @@
 import {
   DEFAULT_CHUNK_SIZE,
-  ShadownloaderClient,
+  DropgateClient,
   estimateTotalUploadSizeBytes,
   isSecureContextForP2P,
   lifetimeToMs,
   startP2PSend,
-} from './shadownloader-core.js';
+} from './dropgate-core.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -87,7 +87,7 @@ const state = {
   p2pSecureOk: true,
 };
 
-const coreClient = new ShadownloaderClient({ clientVersion: '0.0.0' });
+const coreClient = new DropgateClient({ clientVersion: '0.0.0' });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -532,7 +532,7 @@ async function startStandardUpload() {
     return;
   }
 
-  const client = new ShadownloaderClient({ clientVersion: state.info?.version || '0.0.0' });
+  const client = new DropgateClient({ clientVersion: state.info?.version || '0.0.0' });
 
   const lifetimeMs = lifetimeMsFromUI();
 

@@ -1,5 +1,5 @@
 /**
- * Shadownloader Core (ES Module)
+ * Dropgate Core (ES Module)
  */
 
 export const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
@@ -32,32 +32,32 @@ export const ENCRYPTION_OVERHEAD_PER_CHUNK = AES_GCM_IV_BYTES + AES_GCM_TAG_BYTE
  * @typedef {{ name?:string, version:string, capabilities?: ServerCapabilities }} ServerInfo
  */
 
-export class ShadownloaderError extends Error {
+export class DropgateError extends Error {
   /** @param {string} message @param {{code?:string, details?:any, cause?:any}} [opts] */
   constructor(message, opts = {}) {
     super(message);
     this.name = this.constructor.name;
     /** @type {string} */
-    this.code = opts.code || 'SHADOWNLOADER_ERROR';
+    this.code = opts.code || 'DROPGATE_ERROR';
     /** @type {any} */
     this.details = opts.details;
     if (opts.cause) this.cause = opts.cause;
   }
 }
 
-export class ShadownloaderValidationError extends ShadownloaderError {
+export class DropgateValidationError extends DropgateError {
   constructor(message, opts = {}) {
     super(message, { ...opts, code: opts.code || 'VALIDATION_ERROR' });
   }
 }
 
-export class ShadownloaderNetworkError extends ShadownloaderError {
+export class DropgateNetworkError extends DropgateError {
   constructor(message, opts = {}) {
     super(message, { ...opts, code: opts.code || 'NETWORK_ERROR' });
   }
 }
 
-export class ShadownloaderProtocolError extends ShadownloaderError {
+export class DropgateProtocolError extends DropgateError {
   constructor(message, opts = {}) {
     super(message, { ...opts, code: opts.code || 'PROTOCOL_ERROR' });
   }
@@ -137,17 +137,17 @@ export function isP2PCodeLike(code) {
 export async function ensurePeerJsLoaded({ src = '/vendor/peerjs.min.js', documentObj = globalThis.document } = {}) {
   if (globalThis.Peer) return;
   if (!documentObj?.createElement) {
-    throw new ShadownloaderValidationError('PeerJS cannot be loaded (document is unavailable).');
+    throw new DropgateValidationError('PeerJS cannot be loaded (document is unavailable).');
   }
   await new Promise((resolve, reject) => {
     const s = documentObj.createElement('script');
     s.src = src;
     s.async = true;
     s.onload = () => resolve();
-    s.onerror = () => reject(new ShadownloaderNetworkError('Could not load PeerJS client.'));
+    s.onerror = () => reject(new DropgateNetworkError('Could not load PeerJS client.'));
     documentObj.head.appendChild(s);
   });
-  if (!globalThis.Peer) throw new ShadownloaderNetworkError('PeerJS client did not initialise.');
+  if (!globalThis.Peer) throw new DropgateNetworkError('PeerJS client did not initialise.');
 }
 
 function buildPeerOptions({ peerjsPath = '/peerjs', iceServers = [], locationObj = globalThis.location } = {}) {
@@ -185,13 +185,13 @@ async function createPeerWithRetries({ code, codeGenerator, maxAttempts, buildPe
     }
   }
 
-  throw lastError || new ShadownloaderNetworkError('Could not establish PeerJS connection.');
+  throw lastError || new DropgateNetworkError('Could not establish PeerJS connection.');
 }
 
 /**
  * Start a direct transfer (P2P) sender session.
  *
- * If you pass serverInfo (from ShadownloaderClient.getServerInfo), the function will
+ * If you pass serverInfo (from DropgateClient.getServerInfo), the function will
  * refuse to run when serverInfo.capabilities.p2p.enabled is false.
  *
  * NOTE: Direct transfer requires a secure context (HTTPS or localhost).
@@ -239,14 +239,14 @@ export async function startP2PSend({
   onComplete,
   onError,
 } = {}) {
-  if (!file) throw new ShadownloaderValidationError('File is missing.');
+  if (!file) throw new DropgateValidationError('File is missing.');
   if (!isSecureContextForP2P(locationObj, globalThis.isSecureContext)) {
-    throw new ShadownloaderValidationError('Direct transfer requires a secure context (HTTPS or localhost).');
+    throw new DropgateValidationError('Direct transfer requires a secure context (HTTPS or localhost).');
   }
 
   const p2pCaps = serverInfo?.capabilities?.p2p;
   if (serverInfo && !p2pCaps?.enabled) {
-    throw new ShadownloaderValidationError('Direct transfer is disabled on this server.');
+    throw new DropgateValidationError('Direct transfer is disabled on this server.');
   }
 
   const peerjsPathFinal = peerjsPath ?? p2pCaps?.peerjsPath ?? '/peerjs';
@@ -318,7 +318,7 @@ export async function startP2PSend({
         return;
       }
       if (data.t === 'error') {
-        onError?.(new ShadownloaderNetworkError(data.message || 'Receiver reported an error.'));
+        onError?.(new DropgateNetworkError(data.message || 'Receiver reported an error.'));
         stop();
       }
     });
@@ -375,12 +375,12 @@ export async function startP2PSend({
           ? await Promise.race([ackPromise, sleep(ackTimeoutMs).catch(() => null)])
           : null;
         if (!ackResult || typeof ackResult !== 'object') {
-          throw new ShadownloaderNetworkError('Receiver did not confirm completion.');
+          throw new DropgateNetworkError('Receiver did not confirm completion.');
         }
         const ackTotal = Number(ackResult.total) || file.size;
         const ackReceived = Number(ackResult.received) || 0;
         if (ackTotal && ackReceived < ackTotal) {
-          throw new ShadownloaderNetworkError('Receiver reported an incomplete transfer.');
+          throw new DropgateNetworkError('Receiver reported an incomplete transfer.');
         }
         reportProgress({ received: ackReceived || ackTotal, total: ackTotal });
         transferCompleted = true;
@@ -400,7 +400,7 @@ export async function startP2PSend({
 
     conn.on('close', () => {
       if (!transferCompleted && transferActive && !stopped) {
-        onError?.(new ShadownloaderNetworkError('Receiver disconnected before transfer completed.'));
+        onError?.(new DropgateNetworkError('Receiver disconnected before transfer completed.'));
       }
       stop();
     });
@@ -412,7 +412,7 @@ export async function startP2PSend({
 /**
  * Start a direct transfer (P2P) receiver session.
  *
- * If you pass serverInfo (from ShadownloaderClient.getServerInfo), the function will
+ * If you pass serverInfo (from DropgateClient.getServerInfo), the function will
  * refuse to run when serverInfo.capabilities.p2p.enabled is false.
  *
  * NOTE: Direct transfer requires a secure context (HTTPS or localhost).
@@ -450,19 +450,19 @@ export async function startP2PReceive({
   onError,
   onDisconnect,
 } = {}) {
-  if (!code) throw new ShadownloaderValidationError('No sharing code was provided.');
+  if (!code) throw new DropgateValidationError('No sharing code was provided.');
   if (!isSecureContextForP2P(locationObj, globalThis.isSecureContext)) {
-    throw new ShadownloaderValidationError('Direct transfer requires a secure context (HTTPS or localhost).');
+    throw new DropgateValidationError('Direct transfer requires a secure context (HTTPS or localhost).');
   }
 
   const p2pCaps = serverInfo?.capabilities?.p2p;
   if (serverInfo && !p2pCaps?.enabled) {
-    throw new ShadownloaderValidationError('Direct transfer is disabled on this server.');
+    throw new DropgateValidationError('Direct transfer is disabled on this server.');
   }
 
   const normalizedCode = String(code).trim().replace(/\s+/g, '').toUpperCase();
   if (!isP2PCodeLike(normalizedCode)) {
-    throw new ShadownloaderValidationError('Invalid direct transfer code.');
+    throw new DropgateValidationError('Invalid direct transfer code.');
   }
 
   const peerjsPathFinal = peerjsPath ?? p2pCaps?.peerjsPath ?? '/peerjs';
@@ -508,7 +508,7 @@ export async function startP2PReceive({
             onMeta?.({ name, total });
 
             if (!streamSaverObj?.createWriteStream) {
-              throw new ShadownloaderValidationError('Streaming is unavailable in this browser.');
+              throw new DropgateValidationError('Streaming is unavailable in this browser.');
             }
             const stream = streamSaverObj.createWriteStream(name, total ? { size: total } : undefined);
             writer = stream.getWriter();
@@ -520,7 +520,7 @@ export async function startP2PReceive({
           if (data.t === 'end') {
             await writeQueue;
             if (total && received < total) {
-              const err = new ShadownloaderNetworkError('Transfer ended before the full file was received.');
+              const err = new DropgateNetworkError('Transfer ended before the full file was received.');
               try { conn.send({ t: 'error', message: err.message }); } catch { }
               throw err;
             }
@@ -531,7 +531,7 @@ export async function startP2PReceive({
           }
 
           if (data.t === 'error') {
-            throw new ShadownloaderNetworkError(data.message || 'Sender reported an error.');
+            throw new DropgateNetworkError(data.message || 'Sender reported an error.');
           }
           return;
         }
@@ -674,10 +674,10 @@ export async function encryptFilenameToBase64(cryptoObj, filename, key) {
 
 export function validatePlainFilename(filename) {
   if (typeof filename !== 'string' || filename.trim().length === 0) {
-    throw new ShadownloaderValidationError('Invalid filename. Must be a non-empty string.');
+    throw new DropgateValidationError('Invalid filename. Must be a non-empty string.');
   }
   if (filename.length > 255 || /[\/\\]/.test(filename)) {
-    throw new ShadownloaderValidationError('Invalid filename. Contains illegal characters or is too long.');
+    throw new DropgateValidationError('Invalid filename. Contains illegal characters or is too long.');
   }
 }
 
@@ -689,9 +689,9 @@ export function parseSemverMajorMinor(version) {
 }
 
 /**
- * Minimal, UI-agnostic client for Shadownloader uploads.
+ * Minimal, UI-agnostic client for Dropgate uploads.
  */
-export class ShadownloaderClient {
+export class DropgateClient {
   /**
    * @param {{
    *  clientVersion: string,
@@ -703,7 +703,7 @@ export class ShadownloaderClient {
    */
   constructor(opts) {
     if (!opts || typeof opts.clientVersion !== 'string') {
-      throw new ShadownloaderValidationError('ShadownloaderClient requires clientVersion (string).');
+      throw new DropgateValidationError('DropgateClient requires clientVersion (string).');
     }
     this.clientVersion = opts.clientVersion;
     this.chunkSize = Number.isFinite(opts.chunkSize) ? opts.chunkSize : DEFAULT_CHUNK_SIZE;
@@ -711,7 +711,7 @@ export class ShadownloaderClient {
     this.cryptoObj = opts.cryptoObj || globalThis.crypto;
     this.logger = opts.logger || null;
 
-    if (!this.fetchFn) throw new ShadownloaderValidationError('No fetch() implementation found.');
+    if (!this.fetchFn) throw new DropgateValidationError('No fetch() implementation found.');
   }
 
   log(level, message, meta) {
@@ -736,7 +736,7 @@ export class ShadownloaderClient {
     } = opts;
 
     if (!url || typeof url !== 'string') {
-      throw new ShadownloaderValidationError('Server URL is missing.');
+      throw new DropgateValidationError('Server URL is missing.');
     }
 
     let clean = url.trim().replace(/\/+$/, '');
@@ -791,9 +791,9 @@ export class ShadownloaderClient {
         return { cleanUrl, serverInfo: json };
       }
 
-      throw new ShadownloaderProtocolError(`Server info request failed (status ${res.status}).`);
+      throw new DropgateProtocolError(`Server info request failed (status ${res.status}).`);
     } catch (err) {
-      throw new ShadownloaderNetworkError('Could not reach server /api/info.', { cause: err });
+      throw new DropgateNetworkError('Could not reach server /api/info.', { cause: err });
     }
   }
 
@@ -819,7 +819,7 @@ export class ShadownloaderClient {
 
     if (!res.ok) {
       const msg = json?.error || `Share lookup failed (status ${res.status}).`;
-      throw new ShadownloaderProtocolError(msg, { details: json });
+      throw new DropgateProtocolError(msg, { details: json });
     }
 
     return json || { valid: false, reason: 'Unknown response.' };
@@ -863,25 +863,25 @@ export class ShadownloaderClient {
 
   /**
    * Validates file + settings against server capabilities.
-   * Throws ShadownloaderValidationError on failure.
+   * Throws DropgateValidationError on failure.
    */
   validateUploadInputs({ file, lifetimeMs, encrypt, serverInfo }) {
     const caps = serverInfo?.capabilities?.upload;
     if (!caps || !caps.enabled) {
       // The server does not support uploads.
-      throw new ShadownloaderValidationError('Server does not support file uploads.');
+      throw new DropgateValidationError('Server does not support file uploads.');
     }
 
     const isFile = (typeof File !== 'undefined') && (file instanceof File);
     const isBlob = (typeof Blob !== 'undefined') && (file instanceof Blob);
     if (!isFile && !isBlob) {
-      throw new ShadownloaderValidationError('File is missing or invalid.');
+      throw new DropgateValidationError('File is missing or invalid.');
     }
 
     // If it is a Blob without a name, the caller should provide filename separately.
     const fileSize = Number(file.size || 0);
     if (!Number.isFinite(fileSize) || fileSize <= 0) {
-      throw new ShadownloaderValidationError('Cannot upload empty (0 byte) files.');
+      throw new DropgateValidationError('Cannot upload empty (0 byte) files.');
     }
 
     // maxSizeMB: 0 means unlimited
@@ -895,7 +895,7 @@ export class ShadownloaderClient {
         const msg = encrypt
           ? `File too large once encryption overhead is included. Server limit: ${maxMB} MB.`
           : `File too large. Server limit: ${maxMB} MB.`;
-        throw new ShadownloaderValidationError(msg);
+        throw new DropgateValidationError(msg);
       }
     }
 
@@ -903,22 +903,22 @@ export class ShadownloaderClient {
     const maxHours = Number(caps.maxLifetimeHours);
     const lt = Number(lifetimeMs);
     if (!Number.isFinite(lt) || lt < 0 || !Number.isInteger(lt)) {
-      throw new ShadownloaderValidationError('Invalid lifetime. Must be a non-negative integer (milliseconds).');
+      throw new DropgateValidationError('Invalid lifetime. Must be a non-negative integer (milliseconds).');
     }
 
     if (Number.isFinite(maxHours) && maxHours > 0) {
       const limitMs = Math.round(maxHours * 60 * 60 * 1000);
       if (lt === 0) {
-        throw new ShadownloaderValidationError(`Server does not allow unlimited file lifetime. Max: ${maxHours} hours.`);
+        throw new DropgateValidationError(`Server does not allow unlimited file lifetime. Max: ${maxHours} hours.`);
       }
       if (lt > limitMs) {
-        throw new ShadownloaderValidationError(`File lifetime too long. Server limit: ${maxHours} hours.`);
+        throw new DropgateValidationError(`File lifetime too long. Server limit: ${maxHours} hours.`);
       }
     }
 
     // encryption support
     if (encrypt && !caps.e2ee) {
-      throw new ShadownloaderValidationError('Server does not support end-to-end encryption.');
+      throw new DropgateValidationError('Server does not support end-to-end encryption.');
     }
 
     return true;
@@ -972,7 +972,7 @@ export class ShadownloaderClient {
     };
 
     if (!this.cryptoObj?.subtle) {
-      throw new ShadownloaderValidationError('Web Crypto API not available (crypto.subtle).');
+      throw new DropgateValidationError('Web Crypto API not available (crypto.subtle).');
     }
 
     // 0) get server info + compat
@@ -984,13 +984,13 @@ export class ShadownloaderClient {
       cleanUrl = res.cleanUrl;
       serverInfo = res.serverInfo;
     } catch (err) {
-      throw new ShadownloaderNetworkError('Could not connect to the server.', { cause: err });
+      throw new DropgateNetworkError('Could not connect to the server.', { cause: err });
     }
 
     const compat = this.checkCompatibility(serverInfo);
     progress({ phase: 'server-compat', text: compat.message });
     if (!compat.compatible) {
-      throw new ShadownloaderValidationError(compat.message);
+      throw new DropgateValidationError(compat.message);
     }
 
     // 1) validate inputs
@@ -1014,7 +1014,7 @@ export class ShadownloaderClient {
         keyB64 = await exportKeyBase64(this.cryptoObj, cryptoKey);
         transmittedFilename = await encryptFilenameToBase64(this.cryptoObj, filename, cryptoKey);
       } catch (err) {
-        throw new ShadownloaderError('Failed to prepare encryption.', { code: 'CRYPTO_PREP_FAILED', cause: err });
+        throw new DropgateError('Failed to prepare encryption.', { code: 'CRYPTO_PREP_FAILED', cause: err });
       }
     }
 
@@ -1043,12 +1043,12 @@ export class ShadownloaderClient {
 
     if (!initRes.res.ok) {
       const msg = initRes.json?.error || `Server initialisation failed: ${initRes.res.status}`;
-      throw new ShadownloaderProtocolError(msg, { details: initRes.json || initRes.text });
+      throw new DropgateProtocolError(msg, { details: initRes.json || initRes.text });
     }
 
     const uploadId = initRes.json?.uploadId;
     if (!uploadId || typeof uploadId !== 'string') {
-      throw new ShadownloaderProtocolError('Server did not return a valid uploadId.');
+      throw new DropgateProtocolError('Server did not return a valid uploadId.');
     }
 
     // 5) chunks
@@ -1080,7 +1080,7 @@ export class ShadownloaderClient {
 
       // server validates: chunk <= 5MB + 1024, so keep chunkSize at 5MB.
       if (chunkBlob.size > (DEFAULT_CHUNK_SIZE + 1024)) {
-        throw new ShadownloaderValidationError('Chunk too large (client-side). Check chunk size settings.');
+        throw new DropgateValidationError('Chunk too large (client-side). Check chunk size settings.');
       }
 
       // hash encrypted/plain payload
@@ -1124,12 +1124,12 @@ export class ShadownloaderClient {
 
     if (!completeRes.res.ok) {
       const msg = completeRes.json?.error || 'Finalisation failed.';
-      throw new ShadownloaderProtocolError(msg, { details: completeRes.json || completeRes.text });
+      throw new DropgateProtocolError(msg, { details: completeRes.json || completeRes.text });
     }
 
     const fileId = completeRes.json?.id;
     if (!fileId || typeof fileId !== 'string') {
-      throw new ShadownloaderProtocolError('Server did not return a valid file id.');
+      throw new DropgateProtocolError('Server did not return a valid file id.');
     }
 
     let downloadUrl = `${cleanUrl}/${fileId}`;
@@ -1172,7 +1172,7 @@ export class ShadownloaderClient {
 
         // non-ok => maybe retriable, but let retries handle it
         const text = await res.text().catch(() => '');
-        const err = new ShadownloaderProtocolError(`Chunk ${chunkIndex + 1} failed (HTTP ${res.status}).`, {
+        const err = new DropgateProtocolError(`Chunk ${chunkIndex + 1} failed (HTTP ${res.status}).`, {
           details: { status: res.status, bodySnippet: text.slice(0, 120) },
         });
         throw err;
@@ -1184,7 +1184,7 @@ export class ShadownloaderClient {
         if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
 
         if (attemptsLeft <= 0) {
-          throw err instanceof ShadownloaderError ? err : new ShadownloaderNetworkError('Chunk upload failed.', { cause: err });
+          throw err instanceof DropgateError ? err : new DropgateNetworkError('Chunk upload failed.', { cause: err });
         }
 
         const attemptNumber = (maxRetries - attemptsLeft) + 1;

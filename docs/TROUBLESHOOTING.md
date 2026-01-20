@@ -1,6 +1,6 @@
 # 🛠️ Troubleshooting
 
-This page covers the most common things that can go wrong when running or using Shadownloader.
+This page covers the most common things that can go wrong when running or using Dropgate.
 If you get stuck, turning on debug logs for a minute usually makes the cause obvious.
 
 ---

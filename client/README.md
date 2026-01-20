@@ -1,9 +1,9 @@
 <div align="center">
-   <img alt="Shadownloader Logo" src="./src/img/shadownloader.png" style="width:100px;height:auto;margin-bottom:1rem;" />
+   <img alt="Dropgate Logo" src="./src/img/dropgate.png" style="width:100px;height:auto;margin-bottom:1rem;" />
 
-   # Shadownloader Client
+   # Dropgate Client
 
-   <p style="margin-bottom:1rem;">An Electron-based, privacy-first file sharing client built for secure communication with Shadownloader servers.</p>
+   <p style="margin-bottom:1rem;">An Electron-based, privacy-first file sharing client built for secure communication with Dropgate servers.</p>
 </div>
 
 <div align="center">
@@ -20,7 +20,7 @@
 
 ## 🌍 Overview
 
-**Shadownloader Client** is the desktop way to upload and share files through a Shadownloader Server.
+**Dropgate Client** is the desktop way to upload and share files through a Dropgate Server.
 It’s built to feel simple: pick a file, choose your options, hit upload, and share the link.
 
 
@@ -28,7 +28,7 @@ It’s built to feel simple: pick a file, choose your options, hit upload, and s
 
 * 🔒 **End-to-End Encryption (E2EE)** | Encrypt on your device before upload, decrypt on the recipient’s device. The server doesn’t need your key.
 
-* 🌐 **Server Agnostic** | Connect to any compatible Shadownloader Server — whether it’s self-hosted at home, deployed via Docker, or behind a reverse proxy.
+* 🌐 **Server Agnostic** | Connect to any compatible Dropgate Server — whether it’s self-hosted at home, deployed via Docker, or behind a reverse proxy.
 
 * 🧱 **Privacy by Design** | No telemetry, no analytics, and no personal identifiers. Your data stays between you and your chosen server.
 
@@ -43,9 +43,9 @@ It’s built to feel simple: pick a file, choose your options, hit upload, and s
 
 ## 📦 Installation
 
-To install Shadownloader Client:
+To install Dropgate Client:
 
-1. Download the latest release for your OS from the [releases page](https://github.com/WillTDA/Shadownloader/releases).
+1. Download the latest release for your OS from the [releases page](https://github.com/WillTDA/Dropgate/releases).
 2. Extract or install the app as you would any other desktop app.
 3. Launch the client and connect to your preferred server.
 
@@ -55,12 +55,12 @@ To install Shadownloader Client:
 ### Sending a file
 
 1. **Launch** the client.
-2. **Enter the server address** you want to connect to (for example, your home server or a private Shadownloader instance).
+2. **Enter the server address** you want to connect to (for example, your home server or a private Dropgate instance).
 3. **Select a file** to upload (or drag and drop it into the window).
 4. **Choose your options** (E2EE and file lifetime, depending on what the server allows).
 5. **Hit upload!** When it finishes, the **download link is copied to your clipboard**.
 
-**Protip (Windows):** Right-click a file and choose either **"Share with Shadownloader"** or **"Share with Shadownloader (E2EE)"** to upload silently in the background.
+**Protip (Windows):** Right-click a file and choose either **"Share with Dropgate"** or **"Share with Dropgate (E2EE)"** to upload silently in the background.
 
 ### Receiving a file
 
@@ -80,8 +80,8 @@ If your server has **Direct Transfer (P2P)** enabled, you can use it from the se
 To set up a development environment:
 
 ```bash
-git clone https://github.com/WillTDA/Shadownloader.git
-cd Shadownloader/client
+git clone https://github.com/WillTDA/Dropgate.git
+cd Dropgate/client
 npm install
 npm start
 ```
@@ -100,7 +100,7 @@ Distributable binaries will appear in the `dist` folder.
 
 ## 🔌 Self-Hosting & Networking
 
-Shadownloader Client works seamlessly with **self-hosted Shadownloader Servers**, which you can run from your own **home server**, **NAS**, or **cloud VPS**.
+Dropgate Client works seamlessly with **self-hosted Dropgate Servers**, which you can run from your own **home server**, **NAS**, or **cloud VPS**.
 
 It plays nicely with common setups like:
 
@@ -111,7 +111,7 @@ It plays nicely with common setups like:
 
 ## 📜 License
 
-Shadownloader Client is licensed under the **GPL-3.0 License**.
+Dropgate Client is licensed under the **GPL-3.0 License**.
 See the [LICENSE](./LICENSE) file for details.
 
 
@@ -125,8 +125,8 @@ See the [LICENSE](./LICENSE) file for details.
 ## 🙂 Contact Us
 
 * 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Shadownloader/issues)
-* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Dropgate/issues/new?labels=enhancement)
 
 
 <div align="center">

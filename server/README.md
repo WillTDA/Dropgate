@@ -1,7 +1,7 @@
 <div align="center">
-   <img alt="Shadownloader Logo" src="./public/assets/icon.png" style="width:100px;height:auto;margin-bottom:1rem;" />
+   <img alt="Dropgate Logo" src="./public/assets/icon.png" style="width:100px;height:auto;margin-bottom:1rem;" />
 
-   # Shadownloader Server
+   # Dropgate Server
 
    <p style="margin-bottom:1rem;">A Node.js-based backend for secure, privacy-focused file sharing with optional end-to-end encryption support.</p>
 </div>
@@ -17,14 +17,14 @@
 
 ## 🌍 Overview
 
-The **Shadownloader Server** powers the backend of the system.
+The **Dropgate Server** powers the backend of the system.
 It can be self-hosted easily on:
 - Home servers / NAS boxes
 - VPS instances
 - Docker containers
 - Tunnelled/reverse-proxied setups (Cloudflare Tunnel, Tailscale, etc.)
 
-Shadownloader supports **two ways to share files**:
+Dropgate supports **two ways to share files**:
 
 - **Hosted uploads (classic mode)** — you upload a file, share a link, and the server holds it temporarily.
 - **Direct transfer (P2P)** — when enabled, files can transfer device-to-device, with the server only helping peers connect.
@@ -45,8 +45,8 @@ This means you can spin it up, try the Web UI, and choose what features you want
 ## 🚀 Quick Start (Manual)
 
 ```bash
-git clone https://github.com/WillTDA/Shadownloader.git
-cd Shadownloader/server
+git clone https://github.com/WillTDA/Dropgate.git
+cd Dropgate/server
 npm install
 npm start
 ```
@@ -75,8 +75,8 @@ docker run -d \
   -e UPLOAD_PRESERVE_UPLOADS=true \
   -e UPLOAD_MAX_FILE_SIZE_MB=1000 \
   -v /path/to/uploads:/usr/src/app/uploads \
-  --name shadownloader \
-  willtda/shadownloader-server:latest
+  --name dropgate \
+  willtda/dropgate-server:latest
 ```
 
 If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a path on the host machine and set `UPLOAD_PRESERVE_UPLOADS=true`.
@@ -88,7 +88,7 @@ If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a 
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SERVER_NAME` | `Shadownloader Server` | Display name used by the Web UI and `GET /api/info`. |
+| `SERVER_NAME` | `Dropgate Server` | Display name used by the Web UI and `GET /api/info`. |
 | `ENABLE_WEB_UI` | `true` | Enables the Web UI at `/`. |
 | `LOG_LEVEL` | `INFO` | `NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`. |
 | `RATE_LIMIT_WINDOW_MS` | `60000` | Rate limit window in milliseconds (`0` disables rate limiting). |
@@ -125,7 +125,7 @@ Example response:
 
 ```json
 {
-  "name": "Shadownloader Server",
+  "name": "Dropgate Server",
   "version": "2.0.0",
   "logLevel": "INFO",
   "capabilities": {
@@ -176,7 +176,7 @@ Run the server behind a reverse proxy that terminates TLS:
 
 ## 🔎 Logging and Privacy
 
-Shadownloader tries to keep logs **minimal and transparent**.
+Dropgate tries to keep logs **minimal and transparent**.
 For the full breakdown of what gets logged (and what doesn’t), see:
 
 - [`docs/PRIVACY.md`](../docs/PRIVACY.md)
@@ -200,8 +200,8 @@ See the [LICENSE](./LICENSE) file for details.
 ## 🙂 Contact Us
 
 * 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Shadownloader/issues)
-* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Shadownloader/issues/new?labels=enhancement)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Dropgate/issues/new?labels=enhancement)
 
 <div align="center">
   <a href="https://diamonddigital.dev/">

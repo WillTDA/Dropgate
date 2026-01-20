@@ -1,8 +1,8 @@
-import { ShadownloaderClient } from './shadownloader-core.js';
+import { DropgateClient } from './dropgate-core.js';
 
 (async () => {
   try {
-    const client = new ShadownloaderClient({ clientVersion: '0.0.0' });
+    const client = new DropgateClient({ clientVersion: '0.0.0' });
     const { serverInfo } = await client.getServerInfo(location.origin, { timeoutMs: 5000 });
     const v = serverInfo?.version ? `v${serverInfo.version}` : '';
 

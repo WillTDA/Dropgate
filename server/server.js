@@ -27,7 +27,7 @@ if (rawLogLevel && normalizeLogLevel(rawLogLevel) === 'INFO' && String(rawLogLev
     log('warn', 'Invalid LOG_LEVEL value. Defaulting to INFO.');
 }
 
-log('info', 'Shadownloader Server is starting...');
+log('info', 'Dropgate Server is starting...');
 
 const { version } = require('./package.json');
 const path = require('path');
@@ -43,7 +43,7 @@ const contentDisposition = require('content-disposition');
 const { FSDB } = require('file-system-db');
 const { v4: uuidv4 } = require('uuid');
 
-const serverName = process.env.SERVER_NAME || 'Shadownloader Server';
+const serverName = process.env.SERVER_NAME || 'Dropgate Server';
 log('info', `Server name: ${serverName}`);
 
 const enableWebUI = process.env.ENABLE_WEB_UI !== 'false';
@@ -702,7 +702,7 @@ app.get('/p2p/:code', limiter, (req, res) => {
 
 // Web UI landing page
 app.get('/', limiter, (req, res) => {
-    if (!enableWebUI) return res.status(200).send('Shadownloader Server is running. Web UI is disabled.');
+    if (!enableWebUI) return res.status(200).send('Dropgate Server is running. Web UI is disabled.');
     return res.status(200).render('pages/index', { serverName });
 });
 
@@ -783,11 +783,11 @@ if (enableUpload) {
 }
 
 server.listen(port, () => {
-    log('info', `Shadownloader Server v${version} is running. | Port: ${port}`);
+    log('info', `Dropgate Server v${version} is running. | Port: ${port}`);
 });
 
 const handleShutdown = () => {
-    log('info', 'Shadownloader Server is shutting down...');
+    log('info', 'Dropgate Server is shutting down...');
     if (enableUpload && !preserveUploads) {
         log('info', 'Clearing uploads and temp files upon shutdown...');
         cleanupDir(tmpDir);

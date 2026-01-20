@@ -1,6 +1,6 @@
 {
-    "name": "Shadownloader",
-    "short_name": "Shadownloader",
+    "name": "Dropgate",
+    "short_name": "Dropgate",
     "description": "A lightweight, open-source, privacy-focused file sharing tool.",
     "start_url": "/",
     "scope": "/",

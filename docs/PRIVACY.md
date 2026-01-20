@@ -1,6 +1,6 @@
 # 🔒 Privacy and Logging
 
-Shadownloader is built to be **privacy-first** and **transparent**.
+Dropgate is built to be **privacy-first** and **transparent**.
 That means: logs exist for diagnostics, but they’re designed to be **minimal**, **non-identifying**, and **optional**.
 
 Logging is controlled by the `LOG_LEVEL` environment variable (default: `INFO`).
@@ -8,9 +8,9 @@ The current log level is also exposed to clients via `GET /api/info` so users ca
 
 ---
 
-## ✅ What Shadownloader does *not* log
+## ✅ What Dropgate does *not* log
 
-Shadownloader is intentionally opinionated about avoiding identifying data.
+Dropgate is intentionally opinionated about avoiding identifying data.
 By design, it does **not** log:
 
 - File contents
@@ -24,7 +24,7 @@ If you’re running a public instance, this is one of the key ways the project t
 
 ---
 
-## 🧾 What Shadownloader *may* log
+## 🧾 What Dropgate *may* log
 
 Depending on your `LOG_LEVEL`, you may see:
 

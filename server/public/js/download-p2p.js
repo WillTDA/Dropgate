@@ -1,4 +1,4 @@
-import { ShadownloaderClient, isSecureContextForP2P, startP2PReceive } from './shadownloader-core.js';
+import { DropgateClient, isSecureContextForP2P, startP2PReceive } from './dropgate-core.js';
 
 const elTitle = document.getElementById('title');
 const elMsg = document.getElementById('message');
@@ -50,7 +50,7 @@ const showError = (title, message) => {
 };
 
 async function loadServerInfo() {
-  const client = new ShadownloaderClient({ clientVersion: '0.0.0' });
+  const client = new DropgateClient({ clientVersion: '0.0.0' });
   const { serverInfo } = await client.getServerInfo(location.origin, { timeoutMs: 5000 });
   return serverInfo;
 }
