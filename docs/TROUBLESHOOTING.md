@@ -28,7 +28,7 @@ Set `LOG_LEVEL=DEBUG` on the server, reproduce the issue once, then set it back.
 **Uploads are disabled / 404 on upload routes**
 - Make sure `ENABLE_UPLOAD=true`.
 
-**“File exceeds limit … MB”**
+**“File exceeds limit … MB” / “Chunk too large” / 413**
 - Increase `UPLOAD_MAX_FILE_SIZE_MB`.
 - If you’re behind NGINX/Caddy/etc, also check your proxy’s upload/body size limit.
 
