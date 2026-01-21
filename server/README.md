@@ -14,6 +14,11 @@
 
 </div>
 
+## 🌐 Public Demo
+
+See **Dropgate** in action here: **[dropgate.link](https://dropgate.link)**
+
+To prevent and monitor for abuse, `DEBUG`-level logging and strict rate limits are enforced.
 
 ## 🌍 Overview
 
