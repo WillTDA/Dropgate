@@ -26,6 +26,3 @@ node_modules/
 # Git
 .git/
 .gitignore
-
-# Assets not needed in package
-dropgate.png
