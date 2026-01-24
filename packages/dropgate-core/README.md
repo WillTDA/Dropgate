@@ -124,6 +124,7 @@ const session = await startP2PReceive({
   code: 'ABCD-1234',
   Peer,
   host: 'dropgate.link',
+  port: 443,
   secure: true,
   onMeta: ({ name, total }) => {
     console.log(`Receiving: ${name} (${total} bytes)`);
