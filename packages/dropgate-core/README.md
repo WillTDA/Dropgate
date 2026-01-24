@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-2.0.0-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-2.1.0-brightgreen?style=flat-square)
 ![typescript](https://img.shields.io/badge/TypeScript-5.0+-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -52,7 +52,7 @@ The package ships with multiple build targets:
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.0.0' });
+const client = new DropgateClient({ clientVersion: '2.1.0' });
 
 const result = await client.uploadFile({
   host: 'dropgate.link',
@@ -74,7 +74,7 @@ console.log('Download URL:', result.downloadUrl);
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.0.0' });
+const client = new DropgateClient({ clientVersion: '2.1.0' });
 
 const { serverInfo } = await client.getServerInfo({
   host: 'dropgate.link',
@@ -145,7 +145,7 @@ const session = await startP2PReceive({
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.0.0' });
+const client = new DropgateClient({ clientVersion: '2.1.0' });
 
 // Download with streaming (for large files)
 const result = await client.downloadFile({
