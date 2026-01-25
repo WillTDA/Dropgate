@@ -10,8 +10,17 @@ import {
   isSecureContextForP2P,
   generateP2PCode,
   isP2PCodeLike,
+  parseServerUrl,
+  buildBaseUrl,
 } from '../src/index.js';
-import { DropgateValidationError } from '../src/errors.js';
+import {
+  DropgateError,
+  DropgateValidationError,
+  DropgateNetworkError,
+  DropgateProtocolError,
+  DropgateAbortError,
+  DropgateTimeoutError,
+} from '../src/errors.js';
 
 describe('lifetimeToMs', () => {
   it('converts minutes to milliseconds', () => {
@@ -163,6 +172,148 @@ describe('P2P utilities', () => {
       expect(isP2PCodeLike('abcd-1234')).toBe(false); // Lowercase
       expect(isP2PCodeLike('ABCD1234')).toBe(false);  // No dash
       expect(isP2PCodeLike('')).toBe(false);
+    });
+  });
+});
+
+describe('parseServerUrl', () => {
+  it('parses HTTPS URLs correctly', () => {
+    const result = parseServerUrl('https://dropgate.link');
+    expect(result.host).toBe('dropgate.link');
+    expect(result.secure).toBe(true);
+    expect(result.port).toBeUndefined();
+  });
+
+  it('parses HTTP URLs correctly', () => {
+    const result = parseServerUrl('http://localhost:3000');
+    expect(result.host).toBe('localhost');
+    expect(result.secure).toBe(false);
+    expect(result.port).toBe(3000);
+  });
+
+  it('defaults to HTTPS when no protocol specified', () => {
+    const result = parseServerUrl('dropgate.link');
+    expect(result.host).toBe('dropgate.link');
+    expect(result.secure).toBe(true);
+  });
+
+  it('handles URLs with ports', () => {
+    const result = parseServerUrl('https://example.com:8080');
+    expect(result.host).toBe('example.com');
+    expect(result.port).toBe(8080);
+    expect(result.secure).toBe(true);
+  });
+
+  it('handles URLs with whitespace', () => {
+    const result = parseServerUrl('  https://dropgate.link  ');
+    expect(result.host).toBe('dropgate.link');
+  });
+});
+
+describe('buildBaseUrl', () => {
+  it('builds HTTPS URLs correctly', () => {
+    const url = buildBaseUrl({ host: 'dropgate.link', secure: true });
+    expect(url).toBe('https://dropgate.link');
+  });
+
+  it('builds HTTP URLs correctly', () => {
+    const url = buildBaseUrl({ host: 'localhost', secure: false });
+    expect(url).toBe('http://localhost');
+  });
+
+  it('includes port when specified', () => {
+    const url = buildBaseUrl({ host: 'localhost', port: 3000, secure: false });
+    expect(url).toBe('http://localhost:3000');
+  });
+
+  it('defaults to HTTPS when secure is not specified', () => {
+    const url = buildBaseUrl({ host: 'dropgate.link' });
+    expect(url).toBe('https://dropgate.link');
+  });
+
+  it('throws error for missing host', () => {
+    expect(() => buildBaseUrl({ host: '' })).toThrow(DropgateValidationError);
+    expect(() => buildBaseUrl({ host: undefined as unknown as string })).toThrow(DropgateValidationError);
+  });
+});
+
+describe('Error classes', () => {
+  describe('DropgateError', () => {
+    it('creates error with message and default code', () => {
+      const err = new DropgateError('Test error');
+      expect(err.message).toBe('Test error');
+      expect(err.code).toBe('DROPGATE_ERROR');
+      expect(err.name).toBe('DropgateError');
+    });
+
+    it('creates error with custom code and details', () => {
+      const err = new DropgateError('Test error', {
+        code: 'CUSTOM_CODE',
+        details: { foo: 'bar' },
+      });
+      expect(err.code).toBe('CUSTOM_CODE');
+      expect(err.details).toEqual({ foo: 'bar' });
+    });
+
+    it('creates error with cause', () => {
+      const cause = new Error('Original error');
+      const err = new DropgateError('Wrapped error', { cause });
+      expect(err.cause).toBe(cause);
+    });
+  });
+
+  describe('DropgateValidationError', () => {
+    it('creates error with VALIDATION_ERROR code', () => {
+      const err = new DropgateValidationError('Invalid input');
+      expect(err.message).toBe('Invalid input');
+      expect(err.code).toBe('VALIDATION_ERROR');
+      expect(err.name).toBe('DropgateValidationError');
+    });
+  });
+
+  describe('DropgateNetworkError', () => {
+    it('creates error with NETWORK_ERROR code', () => {
+      const err = new DropgateNetworkError('Connection failed');
+      expect(err.message).toBe('Connection failed');
+      expect(err.code).toBe('NETWORK_ERROR');
+      expect(err.name).toBe('DropgateNetworkError');
+    });
+  });
+
+  describe('DropgateProtocolError', () => {
+    it('creates error with PROTOCOL_ERROR code', () => {
+      const err = new DropgateProtocolError('Server returned invalid response');
+      expect(err.message).toBe('Server returned invalid response');
+      expect(err.code).toBe('PROTOCOL_ERROR');
+      expect(err.name).toBe('DropgateProtocolError');
+    });
+  });
+
+  describe('DropgateAbortError', () => {
+    it('creates error with default message', () => {
+      const err = new DropgateAbortError();
+      expect(err.message).toBe('Operation aborted');
+      expect(err.code).toBe('ABORT_ERROR');
+      expect(err.name).toBe('AbortError');
+    });
+
+    it('creates error with custom message', () => {
+      const err = new DropgateAbortError('Upload cancelled');
+      expect(err.message).toBe('Upload cancelled');
+    });
+  });
+
+  describe('DropgateTimeoutError', () => {
+    it('creates error with default message', () => {
+      const err = new DropgateTimeoutError();
+      expect(err.message).toBe('Request timed out');
+      expect(err.code).toBe('TIMEOUT_ERROR');
+      expect(err.name).toBe('TimeoutError');
+    });
+
+    it('creates error with custom message', () => {
+      const err = new DropgateTimeoutError('Server did not respond in time');
+      expect(err.message).toBe('Server did not respond in time');
     });
   });
 });

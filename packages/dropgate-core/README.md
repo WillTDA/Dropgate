@@ -122,7 +122,7 @@ const session = await startP2PSend({
   port: 443,
   secure: true,
   onCode: (code) => console.log('Share this code:', code),
-  onProgress: ({ sent, total, percent }) => {
+  onProgress: ({ processedBytes, totalBytes, percent }) => {
     console.log(`Sending: ${percent.toFixed(1)}%`);
   },
   onComplete: () => console.log('Transfer complete!'),
@@ -153,7 +153,7 @@ const session = await startP2PReceive({
     // Consumer handles file writing (e.g., streamSaver, fs.write)
     await writer.write(chunk);
   },
-  onProgress: ({ received, total, percent }) => {
+  onProgress: ({ processedBytes, totalBytes, percent }) => {
     console.log(`Receiving: ${percent.toFixed(1)}%`);
   },
   onComplete: () => console.log('Transfer complete!'),
@@ -211,8 +211,8 @@ const result = await client.downloadFile({
   secure: true,
   fileId: 'abc123',
   keyB64: 'base64-key-from-url-hash', // Required for encrypted files
-  onProgress: ({ phase, percent, receivedBytes, totalBytes }) => {
-    console.log(`${phase}: ${percent}% (${receivedBytes}/${totalBytes})`);
+  onProgress: ({ phase, percent, processedBytes, totalBytes }) => {
+    console.log(`${phase}: ${percent}% (${processedBytes}/${totalBytes})`);
   },
   onData: async (chunk) => {
     // Consumer handles file writing (e.g., fs.write, streamSaver)

@@ -73,8 +73,8 @@ export interface BaseProgressEvent {
  * Progress event emitted during upload operations.
  */
 export interface UploadProgressEvent extends BaseProgressEvent {
-  /** Current phase of the operation (e.g., 'init', 'chunk', 'complete'). */
-  phase: string;
+  /** Current phase of the operation. */
+  phase: 'server-info' | 'server-compat' | 'crypto' | 'init' | 'chunk' | 'complete' | 'done' | 'retry-wait' | 'retry';
   /** Human-readable status text. */
   text?: string;
   /** Current chunk index (0-based). */
