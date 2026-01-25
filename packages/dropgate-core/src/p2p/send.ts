@@ -48,6 +48,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     onProgress,
     onComplete,
     onError,
+    onDisconnect,
   } = opts;
 
   // Validate required options
@@ -105,7 +106,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
       Number.isFinite(data.total) && data.total > 0 ? data.total : file.size;
     const safeReceived = Math.min(Number(data.received) || 0, safeTotal || 0);
     const percent = safeTotal ? (safeReceived / safeTotal) * 100 : 0;
-    onProgress?.({ sent: safeReceived, total: safeTotal, percent });
+    onProgress?.({ processedBytes: safeReceived, totalBytes: safeTotal, percent });
   };
 
   const stop = (): void => {
@@ -140,7 +141,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     }
 
     activeConn = conn;
-    onStatus?.({ phase: 'connected', message: 'Connected. Starting transfer...' });
+    onStatus?.({ phase: 'waiting', message: 'Connected. Waiting for receiver to accept...' });
 
     let readyResolve: (() => void) | null = null;
     let ackResolve: ((data: unknown) => void) | null = null;
@@ -167,6 +168,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
       if (!msg.t) return;
 
       if (msg.t === 'ready') {
+        onStatus?.({ phase: 'transferring', message: 'Receiver accepted. Starting transfer...' });
         readyResolve?.();
         return;
       }
@@ -287,10 +289,20 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     });
 
     conn.on('close', () => {
-      if (!transferCompleted && transferActive && !stopped) {
+      if (stopped || transferCompleted) {
+        // Clean shutdown, nothing to report
+        stop();
+        return;
+      }
+
+      if (transferActive) {
+        // Disconnected during transfer
         onError?.(
           new DropgateNetworkError('Receiver disconnected before transfer completed.')
         );
+      } else {
+        // Disconnected before transfer started (during waiting phase)
+        onDisconnect?.();
       }
       stop();
     });

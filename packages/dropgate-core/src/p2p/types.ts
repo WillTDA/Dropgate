@@ -1,4 +1,4 @@
-import type { FileSource, ServerInfo, CryptoAdapter } from '../types.js';
+import type { FileSource, ServerInfo, CryptoAdapter, BaseProgressEvent } from '../types.js';
 
 // ============================================================================
 // PeerJS Types
@@ -110,18 +110,10 @@ export interface P2PStatusEvent {
 }
 
 /** Progress event for P2P send operations. */
-export interface P2PSendProgressEvent {
-  sent: number;
-  total: number;
-  percent: number;
-}
+export interface P2PSendProgressEvent extends BaseProgressEvent {}
 
 /** Progress event for P2P receive operations. */
-export interface P2PReceiveProgressEvent {
-  received: number;
-  total: number;
-  percent: number;
-}
+export interface P2PReceiveProgressEvent extends BaseProgressEvent {}
 
 /** Metadata event when receiving a file. */
 export interface P2PMetadataEvent {
@@ -175,6 +167,8 @@ export interface P2PSendOptions extends P2PServerConfig {
   onComplete?: () => void;
   /** Callback on error. */
   onError?: (err: Error) => void;
+  /** Callback when receiver disconnects. */
+  onDisconnect?: () => void;
 }
 
 /**

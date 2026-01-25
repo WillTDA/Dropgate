@@ -14,7 +14,7 @@ import type {
   CompatibilityResult,
   ShareTargetResult,
   UploadResult,
-  ProgressEvent,
+  UploadProgressEvent,
   DropgateClientOptions,
   UploadOptions,
   GetServerInfoOptions,
@@ -348,7 +348,7 @@ export class DropgateClient {
       retry = {},
     } = opts;
 
-    const progress = (evt: ProgressEvent): void => {
+    const progress = (evt: UploadProgressEvent): void => {
       try {
         if (onProgress) onProgress(evt);
       } catch {
@@ -362,8 +362,10 @@ export class DropgateClient {
       );
     }
 
+    const fileSizeBytes = file.size;
+
     // 0) Get server info + compat
-    progress({ phase: 'server-info', text: 'Checking server...' });
+    progress({ phase: 'server-info', text: 'Checking server...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
 
     const compat = await this.checkCompatibility({
       host,
@@ -374,7 +376,7 @@ export class DropgateClient {
     });
 
     const { baseUrl, serverInfo } = compat;
-    progress({ phase: 'server-compat', text: compat.message });
+    progress({ phase: 'server-compat', text: compat.message, percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
@@ -394,7 +396,7 @@ export class DropgateClient {
     let transmittedFilename = filename;
 
     if (encrypt) {
-      progress({ phase: 'crypto', text: 'Generating encryption key...' });
+      progress({ phase: 'crypto', text: 'Generating encryption key...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
       try {
         cryptoKey = await generateAesGcmKey(this.cryptoObj);
         keyB64 = await exportKeyBase64(this.cryptoObj, cryptoKey);
@@ -420,7 +422,7 @@ export class DropgateClient {
     );
 
     // 4) Init
-    progress({ phase: 'init', text: 'Reserving server storage...' });
+    progress({ phase: 'init', text: 'Reserving server storage...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
 
     const initPayload = {
       filename: transmittedFilename,
@@ -478,10 +480,13 @@ export class DropgateClient {
       let chunkBlob: Blob | FileSource = file.slice(start, end);
 
       const percentComplete = (i / totalChunks) * 100;
+      const processedBytes = i * this.chunkSize;
       progress({
         phase: 'chunk',
         text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
         percent: percentComplete,
+        processedBytes,
+        totalBytes: fileSizeBytes,
         chunkIndex: i,
         totalChunks,
       });
@@ -532,12 +537,14 @@ export class DropgateClient {
           progress,
           chunkIndex: i,
           totalChunks,
+          chunkSize: this.chunkSize,
+          fileSizeBytes,
         }
       );
     }
 
     // 6) Complete
-    progress({ phase: 'complete', text: 'Finalising upload...', percent: 100 });
+    progress({ phase: 'complete', text: 'Finalising upload...', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
 
     const completeRes = await fetchJson(
       this.fetchFn,
@@ -575,7 +582,7 @@ export class DropgateClient {
       downloadUrl += `#${keyB64}`;
     }
 
-    progress({ phase: 'done', text: 'Upload successful!', percent: 100 });
+    progress({ phase: 'done', text: 'Upload successful!', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
 
     return {
       downloadUrl,
@@ -628,7 +635,7 @@ export class DropgateClient {
     }
 
     // 0) Get server info + compat
-    progress({ phase: 'server-info', text: 'Checking server...', receivedBytes: 0, totalBytes: 0, percent: 0 });
+    progress({ phase: 'server-info', text: 'Checking server...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
     const compat = await this.checkCompatibility({
       host,
@@ -639,13 +646,13 @@ export class DropgateClient {
     });
 
     const { baseUrl } = compat;
-    progress({ phase: 'server-compat', text: compat.message, receivedBytes: 0, totalBytes: 0, percent: 0 });
+    progress({ phase: 'server-compat', text: compat.message, processedBytes: 0, totalBytes: 0, percent: 0 });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
 
     // 1) Fetch metadata
-    progress({ phase: 'metadata', text: 'Fetching file info...', receivedBytes: 0, totalBytes: 0, percent: 0 });
+    progress({ phase: 'metadata', text: 'Fetching file info...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
     const { signal: metaSignal, cleanup: metaCleanup } = makeAbortSignal(signal, timeoutMs);
     let metadata: FileMetadata;
@@ -701,7 +708,7 @@ export class DropgateClient {
         throw new DropgateValidationError('Web Crypto API not available for decryption.');
       }
 
-      progress({ phase: 'decrypting', text: 'Preparing decryption...', receivedBytes: 0, totalBytes: 0, percent: 0 });
+      progress({ phase: 'decrypting', text: 'Preparing decryption...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
       try {
         cryptoKey = await importKeyFromBase64(this.cryptoObj, keyB64, this.base64);
@@ -722,7 +729,7 @@ export class DropgateClient {
     }
 
     // 3) Download file content
-    progress({ phase: 'downloading', text: 'Starting download...', percent: 0, receivedBytes: 0, totalBytes });
+    progress({ phase: 'downloading', text: 'Starting download...', percent: 0, processedBytes: 0, totalBytes });
 
     const { signal: downloadSignal, cleanup: downloadCleanup } = makeAbortSignal(signal, timeoutMs);
     let receivedBytes = 0;
@@ -812,7 +819,7 @@ export class DropgateClient {
             phase: 'decrypting',
             text: `Downloading & decrypting... (${percent}%)`,
             percent,
-            receivedBytes,
+            processedBytes: receivedBytes,
             totalBytes,
           });
         }
@@ -851,7 +858,7 @@ export class DropgateClient {
             phase: 'downloading',
             text: `Downloading... (${percent}%)`,
             percent,
-            receivedBytes,
+            processedBytes: receivedBytes,
             totalBytes,
           });
         }
@@ -866,7 +873,7 @@ export class DropgateClient {
       downloadCleanup();
     }
 
-    progress({ phase: 'complete', text: 'Download complete!', percent: 100, receivedBytes, totalBytes });
+    progress({ phase: 'complete', text: 'Download complete!', percent: 100, processedBytes: receivedBytes, totalBytes });
 
     // Combine collected data if not using callback
     let data: Uint8Array | undefined;
@@ -897,9 +904,11 @@ export class DropgateClient {
       maxBackoffMs: number;
       timeoutMs: number;
       signal?: AbortSignal;
-      progress: (evt: ProgressEvent) => void;
+      progress: (evt: UploadProgressEvent) => void;
       chunkIndex: number;
       totalChunks: number;
+      chunkSize: number;
+      fileSizeBytes: number;
     }
   ): Promise<void> {
     const {
@@ -911,6 +920,8 @@ export class DropgateClient {
       progress,
       chunkIndex,
       totalChunks,
+      chunkSize,
+      fileSizeBytes,
     } = opts;
 
     let attemptsLeft = retries;
@@ -956,6 +967,8 @@ export class DropgateClient {
         }
 
         const attemptNumber = maxRetries - attemptsLeft + 1;
+        const processedBytes = chunkIndex * chunkSize;
+        const percent = (chunkIndex / totalChunks) * 100;
         let remaining = currentBackoff;
         const tick = 100;
         while (remaining > 0) {
@@ -963,6 +976,9 @@ export class DropgateClient {
           progress({
             phase: 'retry-wait',
             text: `Chunk upload failed. Retrying in ${secondsLeft}s... (${attemptNumber}/${maxRetries})`,
+            percent,
+            processedBytes,
+            totalBytes: fileSizeBytes,
             chunkIndex,
             totalChunks,
           });
@@ -973,6 +989,9 @@ export class DropgateClient {
         progress({
           phase: 'retry',
           text: `Chunk upload failed. Retrying now... (${attemptNumber}/${maxRetries})`,
+          percent,
+          processedBytes,
+          totalBytes: fileSizeBytes,
           chunkIndex,
           totalChunks,
         });

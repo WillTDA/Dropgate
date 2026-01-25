@@ -546,7 +546,8 @@ var DropgateClient = class {
         "Web Crypto API not available (crypto.subtle)."
       );
     }
-    progress({ phase: "server-info", text: "Checking server..." });
+    const fileSizeBytes = file.size;
+    progress({ phase: "server-info", text: "Checking server...", percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
     const compat = await this.checkCompatibility({
       host,
       port,
@@ -555,7 +556,7 @@ var DropgateClient = class {
       signal
     });
     const { baseUrl, serverInfo } = compat;
-    progress({ phase: "server-compat", text: compat.message });
+    progress({ phase: "server-compat", text: compat.message, percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
@@ -568,7 +569,7 @@ var DropgateClient = class {
     let keyB64 = null;
     let transmittedFilename = filename;
     if (encrypt) {
-      progress({ phase: "crypto", text: "Generating encryption key..." });
+      progress({ phase: "crypto", text: "Generating encryption key...", percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
       try {
         cryptoKey = await generateAesGcmKey(this.cryptoObj);
         keyB64 = await exportKeyBase64(this.cryptoObj, cryptoKey);
@@ -590,7 +591,7 @@ var DropgateClient = class {
       totalChunks,
       encrypt
     );
-    progress({ phase: "init", text: "Reserving server storage..." });
+    progress({ phase: "init", text: "Reserving server storage...", percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
     const initPayload = {
       filename: transmittedFilename,
       lifetime: lifetimeMs,
@@ -633,10 +634,13 @@ var DropgateClient = class {
       const end = Math.min(start + this.chunkSize, file.size);
       let chunkBlob = file.slice(start, end);
       const percentComplete = i / totalChunks * 100;
+      const processedBytes = i * this.chunkSize;
       progress({
         phase: "chunk",
         text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
         percent: percentComplete,
+        processedBytes,
+        totalBytes: fileSizeBytes,
         chunkIndex: i,
         totalChunks
       });
@@ -676,11 +680,13 @@ var DropgateClient = class {
           signal,
           progress,
           chunkIndex: i,
-          totalChunks
+          totalChunks,
+          chunkSize: this.chunkSize,
+          fileSizeBytes
         }
       );
     }
-    progress({ phase: "complete", text: "Finalising upload...", percent: 100 });
+    progress({ phase: "complete", text: "Finalising upload...", percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
     const completeRes = await fetchJson(
       this.fetchFn,
       `${baseUrl}/upload/complete`,
@@ -713,7 +719,7 @@ var DropgateClient = class {
     if (encrypt && keyB64) {
       downloadUrl += `#${keyB64}`;
     }
-    progress({ phase: "done", text: "Upload successful!", percent: 100 });
+    progress({ phase: "done", text: "Upload successful!", percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
     return {
       downloadUrl,
       fileId,
@@ -759,7 +765,7 @@ var DropgateClient = class {
     if (!fileId || typeof fileId !== "string") {
       throw new DropgateValidationError("File ID is required.");
     }
-    progress({ phase: "server-info", text: "Checking server...", receivedBytes: 0, totalBytes: 0, percent: 0 });
+    progress({ phase: "server-info", text: "Checking server...", processedBytes: 0, totalBytes: 0, percent: 0 });
     const compat = await this.checkCompatibility({
       host,
       port,
@@ -768,11 +774,11 @@ var DropgateClient = class {
       signal
     });
     const { baseUrl } = compat;
-    progress({ phase: "server-compat", text: compat.message, receivedBytes: 0, totalBytes: 0, percent: 0 });
+    progress({ phase: "server-compat", text: compat.message, processedBytes: 0, totalBytes: 0, percent: 0 });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
-    progress({ phase: "metadata", text: "Fetching file info...", receivedBytes: 0, totalBytes: 0, percent: 0 });
+    progress({ phase: "metadata", text: "Fetching file info...", processedBytes: 0, totalBytes: 0, percent: 0 });
     const { signal: metaSignal, cleanup: metaCleanup } = makeAbortSignal(signal, timeoutMs);
     let metadata;
     try {
@@ -815,7 +821,7 @@ var DropgateClient = class {
       if (!this.cryptoObj?.subtle) {
         throw new DropgateValidationError("Web Crypto API not available for decryption.");
       }
-      progress({ phase: "decrypting", text: "Preparing decryption...", receivedBytes: 0, totalBytes: 0, percent: 0 });
+      progress({ phase: "decrypting", text: "Preparing decryption...", processedBytes: 0, totalBytes: 0, percent: 0 });
       try {
         cryptoKey = await importKeyFromBase64(this.cryptoObj, keyB64, this.base64);
         filename = await decryptFilenameFromBase64(
@@ -833,7 +839,7 @@ var DropgateClient = class {
     } else {
       filename = metadata.filename || "file";
     }
-    progress({ phase: "downloading", text: "Starting download...", percent: 0, receivedBytes: 0, totalBytes });
+    progress({ phase: "downloading", text: "Starting download...", percent: 0, processedBytes: 0, totalBytes });
     const { signal: downloadSignal, cleanup: downloadCleanup } = makeAbortSignal(signal, timeoutMs);
     let receivedBytes = 0;
     const dataChunks = [];
@@ -902,7 +908,7 @@ var DropgateClient = class {
             phase: "decrypting",
             text: `Downloading & decrypting... (${percent}%)`,
             percent,
-            receivedBytes,
+            processedBytes: receivedBytes,
             totalBytes
           });
         }
@@ -934,7 +940,7 @@ var DropgateClient = class {
             phase: "downloading",
             text: `Downloading... (${percent}%)`,
             percent,
-            receivedBytes,
+            processedBytes: receivedBytes,
             totalBytes
           });
         }
@@ -948,7 +954,7 @@ var DropgateClient = class {
     } finally {
       downloadCleanup();
     }
-    progress({ phase: "complete", text: "Download complete!", percent: 100, receivedBytes, totalBytes });
+    progress({ phase: "complete", text: "Download complete!", percent: 100, processedBytes: receivedBytes, totalBytes });
     let data;
     if (collectData && dataChunks.length > 0) {
       const totalLength = dataChunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -975,7 +981,9 @@ var DropgateClient = class {
       signal,
       progress,
       chunkIndex,
-      totalChunks
+      totalChunks,
+      chunkSize,
+      fileSizeBytes
     } = opts;
     let attemptsLeft = retries;
     let currentBackoff = backoffMs;
@@ -1008,6 +1016,8 @@ var DropgateClient = class {
           throw err instanceof DropgateError ? err : new DropgateNetworkError("Chunk upload failed.", { cause: err });
         }
         const attemptNumber = maxRetries - attemptsLeft + 1;
+        const processedBytes = chunkIndex * chunkSize;
+        const percent = chunkIndex / totalChunks * 100;
         let remaining = currentBackoff;
         const tick = 100;
         while (remaining > 0) {
@@ -1015,6 +1025,9 @@ var DropgateClient = class {
           progress({
             phase: "retry-wait",
             text: `Chunk upload failed. Retrying in ${secondsLeft}s... (${attemptNumber}/${maxRetries})`,
+            percent,
+            processedBytes,
+            totalBytes: fileSizeBytes,
             chunkIndex,
             totalChunks
           });
@@ -1024,6 +1037,9 @@ var DropgateClient = class {
         progress({
           phase: "retry",
           text: `Chunk upload failed. Retrying now... (${attemptNumber}/${maxRetries})`,
+          percent,
+          processedBytes,
+          totalBytes: fileSizeBytes,
           chunkIndex,
           totalChunks
         });
@@ -1146,7 +1162,8 @@ async function startP2PSend(opts) {
     onStatus,
     onProgress,
     onComplete,
-    onError
+    onError,
+    onDisconnect
   } = opts;
   if (!file) {
     throw new DropgateValidationError("File is missing.");
@@ -1188,7 +1205,7 @@ async function startP2PSend(opts) {
     const safeTotal = Number.isFinite(data.total) && data.total > 0 ? data.total : file.size;
     const safeReceived = Math.min(Number(data.received) || 0, safeTotal || 0);
     const percent = safeTotal ? safeReceived / safeTotal * 100 : 0;
-    onProgress?.({ sent: safeReceived, total: safeTotal, percent });
+    onProgress?.({ processedBytes: safeReceived, totalBytes: safeTotal, percent });
   };
   const stop = () => {
     stopped = true;
@@ -1215,7 +1232,7 @@ async function startP2PSend(opts) {
       return;
     }
     activeConn = conn;
-    onStatus?.({ phase: "connected", message: "Connected. Starting transfer..." });
+    onStatus?.({ phase: "waiting", message: "Connected. Waiting for receiver to accept..." });
     let readyResolve = null;
     let ackResolve = null;
     const readyPromise = new Promise((resolve) => {
@@ -1231,6 +1248,7 @@ async function startP2PSend(opts) {
       const msg = data;
       if (!msg.t) return;
       if (msg.t === "ready") {
+        onStatus?.({ phase: "transferring", message: "Receiver accepted. Starting transfer..." });
         readyResolve?.();
         return;
       }
@@ -1323,10 +1341,16 @@ async function startP2PSend(opts) {
       stop();
     });
     conn.on("close", () => {
-      if (!transferCompleted && transferActive && !stopped) {
+      if (stopped || transferCompleted) {
+        stop();
+        return;
+      }
+      if (transferActive) {
         onError?.(
           new DropgateNetworkError("Receiver disconnected before transfer completed.")
         );
+      } else {
+        onDisconnect?.();
       }
       stop();
     });
@@ -1387,6 +1411,8 @@ async function startP2PReceive(opts) {
   let lastProgressSentAt = 0;
   const progressIntervalMs = 120;
   let writeQueue = Promise.resolve();
+  let metaReceived = false;
+  let transferCompleted = false;
   const stop = () => {
     try {
       peer.destroy();
@@ -1411,6 +1437,7 @@ async function startP2PReceive(opts) {
             total = Number(msg.size) || 0;
             received = 0;
             writeQueue = Promise.resolve();
+            metaReceived = true;
             const sendReady = () => {
               try {
                 conn.send({ t: "ready" });
@@ -1419,11 +1446,11 @@ async function startP2PReceive(opts) {
             };
             if (autoReady) {
               onMeta?.({ name, total });
-              onProgress?.({ received, total, percent: 0 });
+              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
               sendReady();
             } else {
               onMeta?.({ name, total, sendReady });
-              onProgress?.({ received, total, percent: 0 });
+              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
             }
             return;
           }
@@ -1439,6 +1466,7 @@ async function startP2PReceive(opts) {
               }
               throw err;
             }
+            transferCompleted = true;
             onComplete?.({ received, total });
             try {
               conn.send({ t: "ack", phase: "end", received, total });
@@ -1470,7 +1498,7 @@ async function startP2PReceive(opts) {
           }
           received += buf.byteLength;
           const percent = total ? Math.min(100, received / total * 100) : 0;
-          onProgress?.({ received, total, percent });
+          onProgress?.({ processedBytes: received, totalBytes: total, percent });
           const now = Date.now();
           if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
             lastProgressSentAt = now;
@@ -1496,8 +1524,13 @@ async function startP2PReceive(opts) {
       }
     });
     conn.on("close", () => {
-      if (received > 0 && total > 0 && received < total) {
+      if (transferCompleted) {
+        return;
+      }
+      if (metaReceived) {
         onDisconnect?.();
+      } else {
+        onError?.(new DropgateNetworkError("Sender disconnected before file details were received."));
       }
     });
   });

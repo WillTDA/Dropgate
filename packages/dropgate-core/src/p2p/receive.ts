@@ -101,6 +101,8 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   let lastProgressSentAt = 0;
   const progressIntervalMs = 120;
   let writeQueue = Promise.resolve();
+  let metaReceived = false;
+  let transferCompleted = false;
 
   const stop = (): void => {
     try {
@@ -143,6 +145,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             total = Number(msg.size) || 0;
             received = 0;
             writeQueue = Promise.resolve();
+            metaReceived = true;
 
             // Function to send ready signal - called automatically if autoReady is true,
             // or passed to onMeta callback for manual invocation if autoReady is false
@@ -156,12 +159,12 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
             if (autoReady) {
               onMeta?.({ name, total });
-              onProgress?.({ received, total, percent: 0 });
+              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
               sendReady();
             } else {
               // Pass sendReady function to callback so consumer can trigger transfer start
               onMeta?.({ name, total, sendReady });
-              onProgress?.({ received, total, percent: 0 });
+              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
             }
             return;
           }
@@ -181,6 +184,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               throw err;
             }
 
+            transferCompleted = true;
             onComplete?.({ received, total });
 
             try {
@@ -224,7 +228,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
             received += buf.byteLength;
             const percent = total ? Math.min(100, (received / total) * 100) : 0;
-            onProgress?.({ received, total, percent });
+            onProgress?.({ processedBytes: received, totalBytes: total, percent });
 
             const now = Date.now();
             if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
@@ -255,8 +259,18 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     });
 
     conn.on('close', () => {
-      if (received > 0 && total > 0 && received < total) {
+      if (transferCompleted) {
+        // Clean completion, nothing to report
+        return;
+      }
+
+      // Sender disconnected before transfer completed
+      if (metaReceived) {
+        // We had file info - this is a mid-transfer or pre-accept disconnect
         onDisconnect?.();
+      } else {
+        // Disconnected before we even got file metadata
+        onError?.(new DropgateNetworkError('Sender disconnected before file details were received.'));
       }
     });
   });

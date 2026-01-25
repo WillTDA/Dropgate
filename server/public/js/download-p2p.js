@@ -1,4 +1,5 @@
 import { getServerInfo, isSecureContextForP2P, startP2PReceive } from './dropgate-core.js';
+import { setStatusError, setStatusSuccess, StatusType, Icons, updateStatusCard, clearStatusBorder } from './status-card.js';
 
 const elTitle = document.getElementById('title');
 const elMsg = document.getElementById('message');
@@ -43,8 +44,14 @@ const setProgress = () => {
 };
 
 const showError = (title, message) => {
-  elTitle.textContent = title;
-  elMsg.textContent = message;
+  setStatusError({
+    card,
+    iconContainer,
+    titleEl: elTitle,
+    messageEl: elMsg,
+    title,
+    message,
+  });
   elMeta.hidden = true;
   elFileDetails.style.display = 'none';
   elDownloadBtn.style.display = 'none';
@@ -52,12 +59,6 @@ const showError = (title, message) => {
   elActions.hidden = false;
   elBytes.hidden = true;
   elBar.parentElement.hidden = true;
-  card?.classList.remove('border-primary', 'border-success');
-  card?.classList.add('border', 'border-danger');
-  if (iconContainer) {
-    iconContainer.className = 'mb-3 text-danger';
-    iconContainer.innerHTML = '<span class="material-icons-round">error</span>';
-  }
 };
 
 async function loadServerInfo() {
@@ -91,10 +92,17 @@ function startDownload() {
 
   elDownloadBtn.style.display = 'none';
   elProgressContainer.style.display = 'block';
-  card?.classList.add('border-primary');
 
-  elTitle.textContent = 'Receiving...';
-  elMsg.textContent = 'Keep this tab open until the transfer completes.';
+  updateStatusCard({
+    card,
+    iconContainer,
+    titleEl: elTitle,
+    messageEl: elMsg,
+    status: StatusType.PRIMARY,
+    icon: Icons.SYNC,
+    title: 'Receiving...',
+    message: 'Keep this tab open until the transfer completes.',
+  });
 
   // Create streamSaver write stream
   if (window.streamSaver?.createWriteStream) {
@@ -178,8 +186,9 @@ async function start() {
         elFileSize.textContent = formatBytes(total);
         elFileDetails.style.display = 'block';
         elDownloadBtn.style.display = 'inline-block';
-        
-        card?.classList.remove('border-primary');
+
+        // Clear border for neutral preview state
+        clearStatusBorder(card);
 
         // Add click handler for download button
         elDownloadBtn.addEventListener('click', startDownload, { once: true });
@@ -192,7 +201,7 @@ async function start() {
         received += chunk.byteLength;
         setProgress();
       },
-      onProgress: ({ received: nextReceived, total: nextTotal }) => {
+      onProgress: ({ processedBytes: nextReceived, totalBytes: nextTotal }) => {
         // Progress is also tracked via onData, but update from sender feedback too
         if (nextReceived > received) received = nextReceived;
         if (nextTotal > 0) total = nextTotal;
@@ -211,17 +220,17 @@ async function start() {
           writer = null;
         }
 
-        elTitle.textContent = 'Transfer Complete';
-        elMsg.textContent = 'Success!';
+        setStatusSuccess({
+          card,
+          iconContainer,
+          titleEl: elTitle,
+          messageEl: elMsg,
+          title: 'Transfer Complete',
+          message: 'Success!',
+        });
         elMeta.textContent = 'The file has been saved to your downloads.';
         elMeta.hidden = false;
         elFileDetails.style.display = 'none';
-        card?.classList.remove('border-primary');
-        card?.classList.add('border', 'border-success');
-        if (iconContainer) {
-          iconContainer.className = 'mb-3 text-success';
-          iconContainer.innerHTML = '<span class="material-icons-round">check_circle</span>';
-        }
       },
       onError: (err) => {
         if (transferCompleted) return;
