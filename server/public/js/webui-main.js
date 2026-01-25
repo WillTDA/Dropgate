@@ -47,6 +47,7 @@ const els = {
 
   p2pWaitCard: $('p2pWaitCard'),
   p2pCode: $('p2pCode'),
+  p2pLinkLabel: $('p2pLinkLabel'),
   p2pLink: $('p2pLink'),
   copyP2PLink: $('copyP2PLink'),
   qrP2PLink: $('qrP2PLink'),
@@ -628,6 +629,17 @@ async function startP2PSendFlow() {
     iceServers: state.iceServers,
     onCode: (id) => {
       showPanels('p2pwait');
+      // Reset visibility of share elements for new session
+      setHidden(els.p2pCode, false);
+      setHidden(els.p2pLinkLabel, false);
+      setHidden(els.p2pLink, false);
+      setHidden(els.copyP2PLink, false);
+      setHidden(els.qrP2PLink, false);
+      // Reset title/subtitle
+      const waitTitle = els.p2pWaitCard?.querySelector('h5');
+      const waitSub = els.p2pWaitCard?.querySelector('.text-body-secondary');
+      if (waitTitle) waitTitle.textContent = 'Awaiting connection...';
+      if (waitSub) waitSub.textContent = 'Provide your recipient with the code below:';
       els.p2pCode.textContent = id;
       const link = `${location.origin}/p2p/${encodeURIComponent(id)}`;
       els.p2pLink.value = link;
@@ -639,6 +651,11 @@ async function startP2PSendFlow() {
         const waitSub = els.p2pWaitCard?.querySelector('.text-body-secondary');
         if (waitTitle) waitTitle.textContent = 'Connected!';
         if (waitSub) waitSub.textContent = message;
+        setHidden(els.p2pCode, true);
+        setHidden(els.p2pLinkLabel, true);
+        setHidden(els.p2pLink, true);
+        setHidden(els.copyP2PLink, true);
+        setHidden(els.qrP2PLink, true);
       } else if (phase === 'transferring') {
         // Switch to progress card when transfer actually starts
         showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });

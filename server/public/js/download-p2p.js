@@ -179,8 +179,8 @@ async function start() {
         pendingSendReady = sendReady;
 
         // Show file preview
-        elTitle.textContent = 'Ready to Download';
-        elMsg.textContent = 'Review the file details below, then click Start Download.';
+        elTitle.textContent = 'Ready to Transfer';
+        elMsg.textContent = 'Review the file details below, then click Start Transfer.';
 
         elFileName.textContent = name;
         elFileSize.textContent = formatBytes(total);

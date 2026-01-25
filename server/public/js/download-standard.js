@@ -160,7 +160,7 @@ async function loadMetadata() {
     const metadata = await response.json();
     downloadState.isEncrypted = Boolean(metadata.isEncrypted);
     downloadState.sizeBytes = metadata.sizeBytes;
-    fileEncryptionEl.textContent = metadata.isEncrypted ? 'Encrypted (E2EE)' : 'Standard download';
+    fileEncryptionEl.textContent = metadata.isEncrypted ? 'End-to-End Encrypted' : 'None';
     fileSizeEl.textContent = formatBytes(metadata.sizeBytes);
 
     trustStatement.style.display = 'block';
