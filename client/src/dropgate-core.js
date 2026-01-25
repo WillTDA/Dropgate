@@ -380,6 +380,26 @@ var DropgateClient = class {
   async resolveShareTarget(value, opts) {
     const { host, port, secure, timeoutMs = 5e3, signal } = opts;
     const baseUrl = buildBaseUrl({ host, port, secure });
+    let serverInfo;
+    try {
+      const res2 = await this.getServerInfo({
+        host,
+        port,
+        secure,
+        timeoutMs,
+        signal
+      });
+      serverInfo = res2.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError("Could not connect to the server.", {
+        cause: err
+      });
+    }
+    const compat = this.checkCompatibility(serverInfo);
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
     const { res, json } = await fetchJson(
       this.fetchFn,
       `${baseUrl}/api/resolve`,
@@ -749,6 +769,28 @@ var DropgateClient = class {
       throw new DropgateValidationError("File ID is required.");
     }
     const baseUrl = buildBaseUrl({ host, port, secure });
+    progress({ phase: "server-info", text: "Checking server...", receivedBytes: 0, totalBytes: 0, percent: 0 });
+    let serverInfo;
+    try {
+      const res = await this.getServerInfo({
+        host,
+        port,
+        secure,
+        timeoutMs,
+        signal
+      });
+      serverInfo = res.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError("Could not connect to the server.", {
+        cause: err
+      });
+    }
+    const compat = this.checkCompatibility(serverInfo);
+    progress({ phase: "server-compat", text: compat.message, receivedBytes: 0, totalBytes: 0, percent: 0 });
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
     progress({ phase: "metadata", text: "Fetching file info...", receivedBytes: 0, totalBytes: 0, percent: 0 });
     const { signal: metaSignal, cleanup: metaCleanup } = makeAbortSignal(signal, timeoutMs);
     let metadata;
