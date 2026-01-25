@@ -1,3 +1,5 @@
+/* Common styles for download pages (standard and P2P) */
+
 #status-card {
   border: 2px solid var(--bs-border-color);
 }
@@ -17,12 +19,6 @@
   font-weight: 600;
 }
 
-#trust-statement,
-#encryption-statement {
-  font-size: 0.9rem;
-  opacity: 0.85;
-}
-
 #download-button {
   margin-top: 1.25rem;
 }
@@ -30,4 +26,12 @@
 .progress-info {
   font-size: 0.875rem;
   margin-top: 0.5rem;
+}
+
+/* Info statements (trust, encryption, how-it-works) */
+#trust-statement,
+#encryption-statement,
+#how-it-works {
+  font-size: 0.9rem;
+  opacity: 0.85;
 }

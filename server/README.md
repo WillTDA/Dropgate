@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-2.0.0-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-2.1.0-brightgreen?style=flat-square)
 ![docker](https://img.shields.io/badge/docker-supported-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -96,6 +96,7 @@ If you want uploads to persist across restarts, map `/usr/src/app/uploads` to a 
 
 | Variable | Default | Description |
 | --- | --- | --- |
+| `SERVER_PORT` | `52443` | Port to run the server on. |
 | `SERVER_NAME` | `Dropgate Server` | Display name used by the Web UI and `GET /api/info`. |
 | `ENABLE_WEB_UI` | `true` | Enables the Web UI at `/`. |
 | `LOG_LEVEL` | `INFO` | `NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`. |
@@ -134,7 +135,7 @@ Example response:
 ```json
 {
   "name": "Dropgate Server",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "logLevel": "INFO",
   "capabilities": {
     "upload": {

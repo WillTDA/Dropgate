@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-2.0.0-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-2.1.0-brightgreen?style=flat-square)
 ![typescript](https://img.shields.io/badge/TypeScript-5.0+-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -52,7 +52,7 @@ The package ships with multiple build targets:
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.0.0' });
+const client = new DropgateClient({ clientVersion: '2.1.0' });
 
 const result = await client.uploadFile({
   host: 'dropgate.link',
@@ -72,11 +72,9 @@ console.log('Download URL:', result.downloadUrl);
 ### ℹ️ Getting Server Info
 
 ```javascript
-import { DropgateClient } from '@dropgate/core';
+import { getServerInfo } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.0.0' });
-
-const { serverInfo } = await client.getServerInfo({
+const { serverInfo } = await getServerInfo({
   host: 'dropgate.link',
   secure: true,
   timeoutMs: 5000,
@@ -85,6 +83,28 @@ const { serverInfo } = await client.getServerInfo({
 console.log('Server version:', serverInfo.version);
 console.log('Upload enabled:', serverInfo.capabilities?.upload?.enabled);
 console.log('P2P enabled:', serverInfo.capabilities?.p2p?.enabled);
+```
+
+### 🔍 Checking Compatibility
+
+```javascript
+import { DropgateClient } from '@dropgate/core';
+
+const client = new DropgateClient({ clientVersion: '2.1.0' });
+
+// checkCompatibility fetches server info internally and compares versions
+const compat = await client.checkCompatibility({
+  host: 'dropgate.link',
+  secure: true,
+  timeoutMs: 5000,
+});
+
+console.log('Compatible:', compat.compatible);
+console.log('Message:', compat.message);
+console.log('Server version:', compat.serverVersion);
+console.log('Client version:', compat.clientVersion);
+// Also returns serverInfo and baseUrl for convenience
+console.log('Server capabilities:', compat.serverInfo.capabilities);
 ```
 
 ### 📤 P2P File Transfer (Sender)
@@ -102,7 +122,7 @@ const session = await startP2PSend({
   port: 443,
   secure: true,
   onCode: (code) => console.log('Share this code:', code),
-  onProgress: ({ sent, total, percent }) => {
+  onProgress: ({ processedBytes, totalBytes, percent }) => {
     console.log(`Sending: ${percent.toFixed(1)}%`);
   },
   onComplete: () => console.log('Transfer complete!'),
@@ -133,10 +153,47 @@ const session = await startP2PReceive({
     // Consumer handles file writing (e.g., streamSaver, fs.write)
     await writer.write(chunk);
   },
-  onProgress: ({ received, total, percent }) => {
+  onProgress: ({ processedBytes, totalBytes, percent }) => {
     console.log(`Receiving: ${percent.toFixed(1)}%`);
   },
   onComplete: () => console.log('Transfer complete!'),
+});
+```
+
+### 📥 P2P File Transfer with Preview (Receiver)
+
+Use `autoReady: false` to show a file preview before starting the transfer:
+
+```javascript
+import { startP2PReceive } from '@dropgate/core';
+
+const Peer = await loadPeerJS();
+let writer;
+
+const session = await startP2PReceive({
+  code: 'ABCD-1234',
+  Peer,
+  host: 'dropgate.link',
+  secure: true,
+  autoReady: false, // Don't start transfer automatically
+  onMeta: ({ name, total, sendReady }) => {
+    // Show file preview to user
+    console.log(`File: ${name} (${total} bytes)`);
+    showPreviewUI(name, total);
+
+    // When user confirms, create writer and start transfer
+    confirmButton.onclick = () => {
+      writer = createWriteStream(name);
+      sendReady(); // Signal sender to begin transfer
+    };
+  },
+  onData: async (chunk) => {
+    await writer.write(chunk);
+  },
+  onComplete: () => {
+    writer.close();
+    console.log('Transfer complete!');
+  },
 });
 ```
 
@@ -145,7 +202,7 @@ const session = await startP2PReceive({
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.0.0' });
+const client = new DropgateClient({ clientVersion: '2.1.0' });
 
 // Download with streaming (for large files)
 const result = await client.downloadFile({
@@ -154,8 +211,8 @@ const result = await client.downloadFile({
   secure: true,
   fileId: 'abc123',
   keyB64: 'base64-key-from-url-hash', // Required for encrypted files
-  onProgress: ({ phase, percent, receivedBytes, totalBytes }) => {
-    console.log(`${phase}: ${percent}% (${receivedBytes}/${totalBytes})`);
+  onProgress: ({ phase, percent, processedBytes, totalBytes }) => {
+    console.log(`${phase}: ${percent}% (${processedBytes}/${totalBytes})`);
   },
   onData: async (chunk) => {
     // Consumer handles file writing (e.g., fs.write, streamSaver)
@@ -197,10 +254,9 @@ The main client class for interacting with Dropgate servers.
 
 | Method | Description |
 | --- | --- |
-| `getServerInfo(opts)` | Fetch server info and capabilities |
 | `uploadFile(opts)` | Upload a file with optional encryption |
 | `downloadFile(opts)` | Download a file with optional decryption |
-| `checkCompatibility(serverInfo)` | Check client/server version compatibility |
+| `checkCompatibility(opts)` | Fetch server info and check client/server version compatibility |
 | `validateUploadInputs(opts)` | Validate file and settings before upload |
 | `resolveShareTarget(value, opts)` | Resolve a sharing code via the server |
 
@@ -219,6 +275,7 @@ The main client class for interacting with Dropgate servers.
 
 | Function | Description |
 | --- | --- |
+| `getServerInfo(opts)` | Fetch server info and capabilities |
 | `parseServerUrl(urlStr)` | Parse a URL string into host/port/secure |
 | `buildBaseUrl(opts)` | Build a URL from host/port/secure |
 | `lifetimeToMs(value, unit)` | Convert lifetime to milliseconds |
@@ -244,7 +301,7 @@ For browser environments, you can use the IIFE bundle:
 ```html
 <script src="/path/to/dropgate-core.browser.js"></script>
 <script>
-  const { DropgateClient, startP2PSend } = DropgateCore;
+  const { DropgateClient, getServerInfo, startP2PSend } = DropgateCore;
   // ...
 </script>
 ```
@@ -253,7 +310,7 @@ Or as an ES module:
 
 ```html
 <script type="module">
-  import { DropgateClient } from '/path/to/dropgate-core.js';
+  import { DropgateClient, getServerInfo } from '/path/to/dropgate-core.js';
   // ...
 </script>
 ```

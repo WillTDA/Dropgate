@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, Menu, globalShortcut, dialog, clipboard, Notification, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
 const path = require('path');
 const Store = require('electron-store').default;
@@ -35,6 +36,101 @@ const store = new Store();
 let mainWindow = null;
 let uploadQueue = [];
 let isUploading = false;
+
+// Auto-updater configuration
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+function initAutoUpdater() {
+    // Check for updates after a short delay to let the app initialize
+    setTimeout(() => {
+        log('Checking for updates...');
+        autoUpdater.checkForUpdates().catch(err => {
+            log('Update check failed: ' + err.message);
+        });
+    }, 5000);
+
+    autoUpdater.on('update-available', (info) => {
+        const currentVersion = app.getVersion();
+        const newVersion = info.version;
+
+        log(`Update available: ${currentVersion} -> ${newVersion}`);
+
+        dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Update Available',
+            message: 'A new version of Dropgate Client is available!',
+            detail: `Current version: ${currentVersion}\nNew version: ${newVersion}\n\nWould you like to download and install this update?`,
+            buttons: ['Yes, Update Now', 'No, Later'],
+            defaultId: 0,
+            cancelId: 1
+        }).then(result => {
+            if (result.response === 0) {
+                log('User chose to download update');
+                autoUpdater.downloadUpdate();
+            } else {
+                log('User declined update');
+            }
+        });
+    });
+
+    autoUpdater.on('update-not-available', () => {
+        log('No updates available');
+    });
+
+    autoUpdater.on('download-progress', (progress) => {
+        log(`Download progress: ${Math.round(progress.percent)}%`);
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+        log('Update downloaded: ' + info.version);
+
+        dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Update Ready',
+            message: 'Update downloaded successfully!',
+            detail: `Version ${info.version} is ready to install. The application will restart to complete the update.`,
+            buttons: ['Install Now', 'Install on Quit'],
+            defaultId: 0,
+            cancelId: 1
+        }).then(result => {
+            if (result.response === 0) {
+                log('User chose to install update now');
+                autoUpdater.quitAndInstall();
+            } else {
+                log('Update will install on quit');
+            }
+        });
+    });
+
+    autoUpdater.on('error', (err) => {
+        log('Auto-updater error: ' + err.message);
+    });
+}
+
+function checkForUpdatesManually() {
+    log('Manual update check triggered');
+    autoUpdater.checkForUpdates().then(result => {
+        if (!result || !result.updateInfo || result.updateInfo.version === app.getVersion()) {
+            dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: 'No Updates',
+                message: 'You\'re up to date!',
+                detail: `Dropgate Client ${app.getVersion()} is the latest version.`,
+                buttons: ['OK']
+            });
+        }
+    }).catch(err => {
+        log('Manual update check failed: ' + err.message);
+        dialog.showMessageBox(mainWindow, {
+            type: 'error',
+            title: 'Update Check Failed',
+            message: 'Could not check for updates.',
+            detail: err.message,
+            buttons: ['OK']
+        });
+    });
+}
 
 function getIconPath() {
     let iconName;
@@ -97,6 +193,7 @@ if (!gotTheLock) {
         if (!wasLaunchedForBackgroundTask) {
             log('Creating main window (not a background task)');
             createWindow();
+            initAutoUpdater();
         } else {
             log('Skipping main window creation (background task detected)');
         }
@@ -351,6 +448,11 @@ const menuTemplate = [
             },
             { type: 'separator' },
             {
+                label: 'Check for Updates',
+                click: checkForUpdatesManually
+            },
+            { type: 'separator' },
+            {
                 label: 'Exit',
                 accelerator: 'Alt+F4',
                 role: 'quit'
@@ -372,7 +474,7 @@ Menu.setApplicationMenu(menu);
 function createCreditsWindow() {
     const creditsWindow = new BrowserWindow({
         width: 875,
-        height: 525,
+        height: 550,
         parent: mainWindow,
         modal: true,
         resizable: false,

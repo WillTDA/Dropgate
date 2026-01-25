@@ -44,6 +44,7 @@ const contentDisposition = require('content-disposition');
 const { FSDB } = require('file-system-db');
 const { v4: uuidv4 } = require('uuid');
 
+const port = process.env.SERVER_PORT || 52443;
 const serverName = process.env.SERVER_NAME || 'Dropgate Server';
 log('info', `Server Name: ${serverName}`);
 
@@ -94,7 +95,6 @@ if (enableP2P) {
 }
 
 const app = express();
-const port = 52443;
 // We create the HTTP server manually so we can attach a PeerServer
 // to the same port/path (fixed mount: /peerjs).
 const server = http.createServer(app);
@@ -233,17 +233,21 @@ app.use((req, res, next) => {
 app.use(
     helmet({
         hsts: false, // HSTS should be handled by the reverse proxy
-        crossOriginOpenerPolicy: false,
+        crossOriginOpenerPolicy: { policy: 'same-origin' },
         contentSecurityPolicy: {
             directives: {
                 ...helmet.contentSecurityPolicy.getDefaultDirectives(),
                 'upgrade-insecure-requests': null, // This should also be managed by the proxy
                 'script-src': ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
-                'style-src': ["'self'", "'unsafe-inline'"],
-                'connect-src': ["'self'", 'ws:', 'wss:'],
-                'frame-src': ["'self'", 'https://jimmywarting.github.io'], // For streamSaver
+                'style-src': ["'self'", "'unsafe-inline'"], // Required for inline style attributes
+                'connect-src': ["'self'"],
+                'frame-src': ["'self'"],
                 'worker-src': ["'self'", 'blob:'],
-                'child-src': ["'self'", 'blob:', 'https://jimmywarting.github.io'],
+                'child-src': ["'self'", 'blob:'],
+                'base-uri': ["'self'"],
+                'form-action': ["'self'"],
+                'object-src': ["'none'"],
+                'frame-ancestors': ["'self'"],
             },
         },
     })
@@ -265,10 +269,13 @@ const serveVendorFile = (filePath, contentType) => (req, res) => {
 };
 
 // Vendor files
-app.get('/vendor/bootstrap.min.css', serveVendorFile('bootstrap/dist/css/bootstrap.min.css', 'text/css; charset=utf-8'));
-app.get('/vendor/bootstrap.min.js', serveVendorFile('bootstrap/dist/js/bootstrap.min.js', 'application/javascript; charset=utf-8'));
-app.get('/vendor/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
-app.get('/vendor/qr-code-styling.js', serveVendorFile('qr-code-styling/lib/qr-code-styling.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/bootstrap/bootstrap.min.css', serveVendorFile('bootstrap/dist/css/bootstrap.min.css', 'text/css; charset=utf-8'));
+app.get('/vendor/bootstrap/bootstrap.min.js', serveVendorFile('bootstrap/dist/js/bootstrap.min.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/streamsaver/streamsaver.js', serveVendorFile('streamsaver/StreamSaver.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/streamsaver/mitm.html', (req, res) => res.render('pages/mitm'));
+app.get('/vendor/streamsaver/sw.js', serveVendorFile('streamsaver/sw.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/peerjs/peerjs.min.js', serveVendorFile('peerjs/dist/peerjs.min.js', 'application/javascript; charset=utf-8'));
+app.get('/vendor/qr-code-styling/qr-code-styling.js', serveVendorFile('qr-code-styling/lib/qr-code-styling.js', 'application/javascript; charset=utf-8'));
 
 const rateLimitWindowMs = process.env.RATE_LIMIT_WINDOW_MS ? process.env.RATE_LIMIT_WINDOW_MS : 60000;
 const rateLimitMaxRequests = process.env.RATE_LIMIT_MAX_REQUESTS ? process.env.RATE_LIMIT_MAX_REQUESTS : 25;
@@ -784,7 +791,7 @@ if (enableUpload) {
 }
 
 server.listen(port, () => {
-    log('info', `Dropgate Server v${version} is running. | Port: ${port}`);
+    log('info', `Dropgate Server v${version} is running. | SERVER_PORT: ${port}`);
 });
 
 const handleShutdown = () => {

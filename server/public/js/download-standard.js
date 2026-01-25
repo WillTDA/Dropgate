@@ -1,4 +1,5 @@
 import { DropgateClient, importKeyFromBase64, decryptFilenameFromBase64 } from './dropgate-core.js';
+import { setStatusError, setStatusSuccess, StatusType, Icons, updateStatusCard } from './status-card.js';
 
 const statusTitle = document.getElementById('status-title');
 const statusMessage = document.getElementById('status-message');
@@ -16,7 +17,7 @@ const card = document.getElementById('status-card');
 const trustStatement = document.getElementById('trust-statement');
 const encryptionStatement = document.getElementById('encryption-statement');
 
-const client = new DropgateClient({ clientVersion: '2.0.0' });
+const client = new DropgateClient({ clientVersion: '2.1.0' });
 
 const downloadState = {
   fileId: null,
@@ -27,12 +28,16 @@ const downloadState = {
 };
 
 function showError(title, message) {
-  statusTitle.textContent = title;
-  statusMessage.textContent = message;
+  setStatusError({
+    card,
+    iconContainer,
+    titleEl: statusTitle,
+    messageEl: statusMessage,
+    title,
+    message,
+  });
   downloadButton.style.display = 'none';
   progressContainer.style.display = 'none';
-  card.classList.add('border', 'border-danger');
-  iconContainer.innerHTML = '<span class="material-icons-round text-danger">error</span>';
 }
 
 function formatBytes(bytes) {
@@ -52,11 +57,12 @@ async function startDownload() {
   progressText.textContent = 'Starting...';
   downloadButton.disabled = true;
 
-  card.classList.remove('border-danger', 'border-success');
-  card.classList.add('border', 'border-primary');
-  iconContainer.innerHTML = downloadState.isEncrypted
-    ? '<span class="material-icons-round text-primary">shield_lock</span>'
-    : '<span class="material-icons-round text-primary">download</span>';
+  updateStatusCard({
+    card,
+    iconContainer,
+    status: StatusType.PRIMARY,
+    icon: downloadState.isEncrypted ? Icons.DOWNLOAD_ENCRYPTED : Icons.DOWNLOAD,
+  });
 
   // For encrypted files, require secure context with streamSaver
   if (downloadState.isEncrypted) {
@@ -91,12 +97,12 @@ async function startDownload() {
       fileId: downloadState.fileId,
       keyB64: downloadState.keyB64,
       timeoutMs: 0, // No timeout for large file downloads
-      onProgress: ({ phase, percent, receivedBytes, totalBytes }) => {
+      onProgress: ({ percent, processedBytes, totalBytes }) => {
         progressBar.style.width = `${percent}%`;
-        progressText.textContent = `${formatBytes(receivedBytes)} / ${formatBytes(totalBytes)}`;
+        progressText.textContent = `${formatBytes(processedBytes)} / ${formatBytes(totalBytes)}`;
         statusMessage.textContent = totalBytes
           ? `Streaming directly to file... (${percent}%)`
-          : `Streaming directly to file... (${formatBytes(receivedBytes)})`;
+          : `Streaming directly to file... (${formatBytes(processedBytes)})`;
       },
       onData: async (chunk) => {
         await writer.write(chunk);
@@ -106,13 +112,16 @@ async function startDownload() {
     await writer.close();
 
     progressBar.style.width = '100%';
-    statusTitle.textContent = 'Download Complete!';
-    statusMessage.textContent = downloadState.isEncrypted
-      ? `Your file "${downloadState.fileName}" has been successfully decrypted and saved.`
-      : `Your file "${downloadState.fileName}" has been successfully saved.`;
-    card.classList.remove('border-danger');
-    card.classList.add('border-success');
-    iconContainer.innerHTML = '<span class="material-icons-round text-success">check_circle</span>';
+    setStatusSuccess({
+      card,
+      iconContainer,
+      titleEl: statusTitle,
+      messageEl: statusMessage,
+      title: 'Download Complete!',
+      message: downloadState.isEncrypted
+        ? `Your file "${downloadState.fileName}" has been successfully decrypted and saved.`
+        : `Your file "${downloadState.fileName}" has been successfully saved.`,
+    });
   } catch (error) {
     console.error(error);
     progressContainer.style.display = 'none';
@@ -120,10 +129,14 @@ async function startDownload() {
     downloadButton.style.display = 'inline-block';
     downloadButton.disabled = false;
 
-    statusTitle.textContent = 'Download Failed';
-    statusMessage.textContent = error.message || 'The link may be incorrect, expired, or the download failed.';
-    card.classList.add('border', 'border-danger');
-    iconContainer.innerHTML = '<span class="material-icons-round text-danger">error</span>';
+    setStatusError({
+      card,
+      iconContainer,
+      titleEl: statusTitle,
+      messageEl: statusMessage,
+      title: 'Download Failed',
+      message: error.message || 'The link may be incorrect, expired, or the download failed.',
+    });
   }
 }
 
@@ -147,7 +160,7 @@ async function loadMetadata() {
     const metadata = await response.json();
     downloadState.isEncrypted = Boolean(metadata.isEncrypted);
     downloadState.sizeBytes = metadata.sizeBytes;
-    fileEncryptionEl.textContent = metadata.isEncrypted ? 'Encrypted (E2EE)' : 'Standard download';
+    fileEncryptionEl.textContent = metadata.isEncrypted ? 'End-to-End Encrypted' : 'None';
     fileSizeEl.textContent = formatBytes(metadata.sizeBytes);
 
     trustStatement.style.display = 'block';
@@ -179,7 +192,7 @@ async function loadMetadata() {
     fileDetails.style.display = 'block';
     downloadButton.style.display = 'inline-block';
     downloadButton.addEventListener('click', startDownload);
-    statusTitle.textContent = 'Ready to download';
+    statusTitle.textContent = 'Ready to Download';
     statusMessage.textContent = 'Review the file details above, then click Start Download.';
   } catch (error) {
     console.error(error);

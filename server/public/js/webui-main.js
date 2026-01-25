@@ -2,6 +2,7 @@ import {
   DEFAULT_CHUNK_SIZE,
   DropgateClient,
   estimateTotalUploadSizeBytes,
+  getServerInfo,
   isSecureContextForP2P,
   lifetimeToMs,
   startP2PSend,
@@ -46,6 +47,7 @@ const els = {
 
   p2pWaitCard: $('p2pWaitCard'),
   p2pCode: $('p2pCode'),
+  p2pLinkLabel: $('p2pLinkLabel'),
   p2pLink: $('p2pLink'),
   copyP2PLink: $('copyP2PLink'),
   qrP2PLink: $('qrP2PLink'),
@@ -87,7 +89,7 @@ const state = {
   p2pSecureOk: true,
 };
 
-const coreClient = new DropgateClient({ clientVersion: '0.0.0' });
+const coreClient = new DropgateClient({ clientVersion: '2.1.0' });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -338,7 +340,7 @@ function applyLifetimeDefaults() {
 }
 
 async function loadServerInfo() {
-  const { serverInfo: info } = await coreClient.getServerInfo({
+  const { serverInfo: info } = await getServerInfo({
     host: location.hostname,
     port: location.port ? Number(location.port) : undefined,
     secure: location.protocol === 'https:',
@@ -417,8 +419,9 @@ function showProgress({ title, sub, percent, doneBytes, totalBytes, icon, iconCo
     }
   }
 
-  els.shareCard.classList.remove('border-danger', 'border-success', 'border-primary');
-  els.shareCard.classList.add('border', iconColor ? iconColor.replace('text-', 'border-') : 'border-primary');
+  // Update progress card border color based on iconColor
+  els.progressCard.classList.remove('border-danger', 'border-success', 'border-primary', 'border-warning');
+  els.progressCard.classList.add('border', iconColor ? iconColor.replace('text-', 'border-') : 'border-primary');
 
   if (title) els.progressTitle.textContent = title;
   if (sub) els.progressSub.textContent = sub;
@@ -537,14 +540,12 @@ async function startStandardUpload() {
     return;
   }
 
-  const client = new DropgateClient({ clientVersion: state.info?.version || '0.0.0' });
-
   const lifetimeMs = lifetimeMsFromUI();
 
   showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
-    const result = await client.uploadFile({
+    const result = await coreClient.uploadFile({
       host: location.hostname,
       port: location.port ? Number(location.port) : undefined,
       secure: location.protocol === 'https:',
@@ -570,8 +571,6 @@ async function startStandardUpload() {
   } catch (err) {
     console.error(err);
     showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
-    els.progressCard?.classList.remove('border-primary');
-    els.progressCard?.classList.add('border', 'border-danger');
     showToast(err?.message || 'Upload failed.');
   }
 }
@@ -581,7 +580,7 @@ async function loadPeerJS() {
 
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = '/vendor/peerjs.min.js';
+    script.src = '/vendor/peerjs/peerjs.min.js';
     script.async = true;
     script.onload = () => {
       if (globalThis.Peer) resolve(globalThis.Peer);
@@ -630,15 +629,43 @@ async function startP2PSendFlow() {
     iceServers: state.iceServers,
     onCode: (id) => {
       showPanels('p2pwait');
+      // Reset visibility of share elements for new session
+      setHidden(els.p2pCode, false);
+      setHidden(els.p2pLinkLabel, false);
+      setHidden(els.p2pLink, false);
+      setHidden(els.copyP2PLink, false);
+      setHidden(els.qrP2PLink, false);
+      // Reset title/subtitle
+      const waitTitle = els.p2pWaitCard?.querySelector('h5');
+      const waitSub = els.p2pWaitCard?.querySelector('.text-body-secondary');
+      if (waitTitle) waitTitle.textContent = 'Awaiting connection...';
+      if (waitSub) waitSub.textContent = 'Provide your recipient with the code below:';
       els.p2pCode.textContent = id;
       const link = `${location.origin}/p2p/${encodeURIComponent(id)}`;
       els.p2pLink.value = link;
     },
-    onStatus: ({ message }) => {
-      showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+    onStatus: ({ phase, message }) => {
+      if (phase === 'waiting') {
+        // Update p2pWaitCard title/subtitle to show waiting status
+        const waitTitle = els.p2pWaitCard?.querySelector('h5');
+        const waitSub = els.p2pWaitCard?.querySelector('.text-body-secondary');
+        if (waitTitle) waitTitle.textContent = 'Connected!';
+        if (waitSub) waitSub.textContent = message;
+        setHidden(els.p2pCode, true);
+        setHidden(els.p2pLinkLabel, true);
+        setHidden(els.p2pLink, true);
+        setHidden(els.copyP2PLink, true);
+        setHidden(els.qrP2PLink, true);
+      } else if (phase === 'transferring') {
+        // Switch to progress card when transfer actually starts
+        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+      } else {
+        // Default behavior for other statuses
+        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+      }
     },
-    onProgress: ({ sent, total, percent }) => {
-      showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent, doneBytes: sent, totalBytes: total, icon: 'sync_alt', iconColor: 'text-primary' });
+    onProgress: ({ processedBytes, totalBytes, percent }) => {
+      showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent, doneBytes: processedBytes, totalBytes, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
       stopP2P();
@@ -650,9 +677,11 @@ async function startP2PSendFlow() {
     },
     onError: (err) => {
       console.error(err);
-      showProgress({ title: 'Transfer Failed', sub: 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
-      els.p2pWaitCard?.classList.remove('border-primary');
-      els.p2pWaitCard?.classList.add('border', 'border-danger');
+      showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
+      stopP2P();
+    },
+    onDisconnect: () => {
+      showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'link_off', iconColor: 'text-warning' });
       stopP2P();
     },
   });
@@ -783,7 +812,12 @@ function wireUI() {
 
     setDisabled(els.codeGo, true);
     try {
-      const result = await coreClient.resolveShareTarget(location.origin, value);
+      const result = await coreClient.resolveShareTarget(value, {
+        host: location.hostname,
+        port: location.port ? Number(location.port) : undefined,
+        secure: location.protocol === 'https:',
+        timeoutMs: 5000,
+      });
       if (!result?.valid || !result?.target) {
         showToast(result?.reason || 'That sharing code could not be validated.', 'warning');
         return;

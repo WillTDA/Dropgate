@@ -1,6 +1,6 @@
 {
   "name": "dropgate-client",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A self-hostable, privacy-first file sharing system with both hosted upload and direct P2P transfer capabilities.",
   "main": "src/main.js",
   "funding": {
@@ -21,6 +21,11 @@
     "files": [
       "**/*"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "WillTDA",
+      "repo": "Dropgate"
+    },
     "win": {
       "target": [
         "nsis"
@@ -72,6 +77,7 @@
   },
   "dependencies": {
     "bootstrap": "^5.3.8",
-    "electron-store": "^11.0.2"
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.3.9"
   }
 }

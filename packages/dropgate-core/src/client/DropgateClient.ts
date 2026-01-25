@@ -14,7 +14,7 @@ import type {
   CompatibilityResult,
   ShareTargetResult,
   UploadResult,
-  ProgressEvent,
+  UploadProgressEvent,
   DropgateClientOptions,
   UploadOptions,
   GetServerInfoOptions,
@@ -44,6 +44,52 @@ export function estimateTotalUploadSizeBytes(
   const base = Number(fileSizeBytes) || 0;
   if (!isEncrypted) return base;
   return base + (Number(totalChunks) || 0) * ENCRYPTION_OVERHEAD_PER_CHUNK;
+}
+
+/**
+ * Fetch server information from the /api/info endpoint.
+ * @param opts - Server target and request options.
+ * @returns The server base URL and server info object.
+ * @throws {DropgateNetworkError} If the server cannot be reached.
+ * @throws {DropgateProtocolError} If the server returns an invalid response.
+ */
+export async function getServerInfo(
+  opts: GetServerInfoOptions
+): Promise<{ baseUrl: string; serverInfo: ServerInfo }> {
+  const { host, port, secure, timeoutMs = 5000, signal, fetchFn: customFetch } = opts;
+
+  const fetchFn = customFetch || getDefaultFetch();
+  if (!fetchFn) {
+    throw new DropgateValidationError('No fetch() implementation found.');
+  }
+
+  const baseUrl = buildBaseUrl({ host, port, secure });
+
+  try {
+    const { res, json } = await fetchJson(
+      fetchFn,
+      `${baseUrl}/api/info`,
+      {
+        method: 'GET',
+        timeoutMs,
+        signal,
+        headers: { Accept: 'application/json' },
+      }
+    );
+
+    if (res.ok && json && typeof json === 'object' && 'version' in json) {
+      return { baseUrl, serverInfo: json as ServerInfo };
+    }
+
+    throw new DropgateProtocolError(
+      `Server info request failed (status ${res.status}).`
+    );
+  } catch (err) {
+    if (err instanceof DropgateError) throw err;
+    throw new DropgateNetworkError('Could not reach server /api/info.', {
+      cause: err,
+    });
+  }
 }
 
 /**
@@ -98,47 +144,6 @@ export class DropgateClient {
   }
 
   /**
-   * Fetch server information from the /api/info endpoint.
-   * @param opts - Server target and request options.
-   * @returns The server base URL and server info object.
-   * @throws {DropgateNetworkError} If the server cannot be reached.
-   * @throws {DropgateProtocolError} If the server returns an invalid response.
-   */
-  async getServerInfo(
-    opts: GetServerInfoOptions
-  ): Promise<{ baseUrl: string; serverInfo: ServerInfo }> {
-    const { host, port, secure, timeoutMs = 5000, signal } = opts;
-
-    const baseUrl = buildBaseUrl({ host, port, secure });
-
-    try {
-      const { res, json } = await fetchJson(
-        this.fetchFn,
-        `${baseUrl}/api/info`,
-        {
-          method: 'GET',
-          timeoutMs,
-          signal,
-          headers: { Accept: 'application/json' },
-        }
-      );
-
-      if (res.ok && json && typeof json === 'object' && 'version' in json) {
-        return { baseUrl, serverInfo: json as ServerInfo };
-      }
-
-      throw new DropgateProtocolError(
-        `Server info request failed (status ${res.status}).`
-      );
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError('Could not reach server /api/info.', {
-        cause: err,
-      });
-    }
-  }
-
-  /**
    * Resolve a user-entered sharing code or URL via the server.
    * @param value - The sharing code or URL to resolve.
    * @param opts - Server target and request options.
@@ -149,9 +154,15 @@ export class DropgateClient {
     value: string,
     opts: GetServerInfoOptions
   ): Promise<ShareTargetResult> {
-    const { host, port, secure, timeoutMs = 5000, signal } = opts;
+    const { timeoutMs = 5000, signal } = opts;
 
-    const baseUrl = buildBaseUrl({ host, port, secure });
+    // Check server compatibility before resolving
+    const compat = await this.checkCompatibility(opts);
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
+
+    const { baseUrl } = compat;
 
     const { res, json } = await fetchJson(
       this.fetchFn,
@@ -181,10 +192,29 @@ export class DropgateClient {
 
   /**
    * Check version compatibility between this client and a server.
-   * @param serverInfo - Server info containing the version to check against.
-   * @returns Compatibility result with status and message.
+   * Fetches server info internally using getServerInfo.
+   * @param opts - Server target and request options.
+   * @returns Compatibility result with status, message, and server info.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the server returns an invalid response.
    */
-  checkCompatibility(serverInfo: ServerInfo): CompatibilityResult {
+  async checkCompatibility(
+    opts: GetServerInfoOptions
+  ): Promise<CompatibilityResult & { serverInfo: ServerInfo; baseUrl: string }> {
+    let baseUrl: string;
+    let serverInfo: ServerInfo;
+
+    try {
+      const result = await getServerInfo({ ...opts, fetchFn: this.fetchFn });
+      baseUrl = result.baseUrl;
+      serverInfo = result.serverInfo;
+    } catch (err) {
+      if (err instanceof DropgateError) throw err;
+      throw new DropgateNetworkError('Could not connect to the server.', {
+        cause: err,
+      });
+    }
+
     const serverVersion = String(serverInfo?.version || '0.0.0');
     const clientVersion = String(this.clientVersion || '0.0.0');
 
@@ -197,6 +227,8 @@ export class DropgateClient {
         clientVersion,
         serverVersion,
         message: `Incompatible versions. Client v${clientVersion}, Server v${serverVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
+        serverInfo,
+        baseUrl,
       };
     }
 
@@ -206,6 +238,8 @@ export class DropgateClient {
         clientVersion,
         serverVersion,
         message: `Client (v${clientVersion}) is newer than Server (v${serverVersion})${serverInfo?.name ? ` (${serverInfo.name})` : ''}. Some features may not work.`,
+        serverInfo,
+        baseUrl,
       };
     }
 
@@ -214,6 +248,8 @@ export class DropgateClient {
       clientVersion,
       serverVersion,
       message: `Server: v${serverVersion}, Client: v${clientVersion}${serverInfo?.name ? ` (${serverInfo.name})` : ''}.`,
+      serverInfo,
+      baseUrl,
     };
   }
 
@@ -312,7 +348,7 @@ export class DropgateClient {
       retry = {},
     } = opts;
 
-    const progress = (evt: ProgressEvent): void => {
+    const progress = (evt: UploadProgressEvent): void => {
       try {
         if (onProgress) onProgress(evt);
       } catch {
@@ -326,30 +362,21 @@ export class DropgateClient {
       );
     }
 
+    const fileSizeBytes = file.size;
+
     // 0) Get server info + compat
-    progress({ phase: 'server-info', text: 'Checking server...' });
+    progress({ phase: 'server-info', text: 'Checking server...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
 
-    let baseUrl: string;
-    let serverInfo: ServerInfo;
-    try {
-      const res = await this.getServerInfo({
-        host,
-        port,
-        secure,
-        timeoutMs: timeouts.serverInfoMs ?? 5000,
-        signal,
-      });
-      baseUrl = res.baseUrl;
-      serverInfo = res.serverInfo;
-    } catch (err) {
-      if (err instanceof DropgateError) throw err;
-      throw new DropgateNetworkError('Could not connect to the server.', {
-        cause: err,
-      });
-    }
+    const compat = await this.checkCompatibility({
+      host,
+      port,
+      secure,
+      timeoutMs: timeouts.serverInfoMs ?? 5000,
+      signal,
+    });
 
-    const compat = this.checkCompatibility(serverInfo);
-    progress({ phase: 'server-compat', text: compat.message });
+    const { baseUrl, serverInfo } = compat;
+    progress({ phase: 'server-compat', text: compat.message, percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
     if (!compat.compatible) {
       throw new DropgateValidationError(compat.message);
     }
@@ -369,7 +396,7 @@ export class DropgateClient {
     let transmittedFilename = filename;
 
     if (encrypt) {
-      progress({ phase: 'crypto', text: 'Generating encryption key...' });
+      progress({ phase: 'crypto', text: 'Generating encryption key...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
       try {
         cryptoKey = await generateAesGcmKey(this.cryptoObj);
         keyB64 = await exportKeyBase64(this.cryptoObj, cryptoKey);
@@ -395,7 +422,7 @@ export class DropgateClient {
     );
 
     // 4) Init
-    progress({ phase: 'init', text: 'Reserving server storage...' });
+    progress({ phase: 'init', text: 'Reserving server storage...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
 
     const initPayload = {
       filename: transmittedFilename,
@@ -453,10 +480,13 @@ export class DropgateClient {
       let chunkBlob: Blob | FileSource = file.slice(start, end);
 
       const percentComplete = (i / totalChunks) * 100;
+      const processedBytes = i * this.chunkSize;
       progress({
         phase: 'chunk',
         text: `Uploading chunk ${i + 1} of ${totalChunks}...`,
         percent: percentComplete,
+        processedBytes,
+        totalBytes: fileSizeBytes,
         chunkIndex: i,
         totalChunks,
       });
@@ -507,12 +537,14 @@ export class DropgateClient {
           progress,
           chunkIndex: i,
           totalChunks,
+          chunkSize: this.chunkSize,
+          fileSizeBytes,
         }
       );
     }
 
     // 6) Complete
-    progress({ phase: 'complete', text: 'Finalising upload...', percent: 100 });
+    progress({ phase: 'complete', text: 'Finalising upload...', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
 
     const completeRes = await fetchJson(
       this.fetchFn,
@@ -550,7 +582,7 @@ export class DropgateClient {
       downloadUrl += `#${keyB64}`;
     }
 
-    progress({ phase: 'done', text: 'Upload successful!', percent: 100 });
+    progress({ phase: 'done', text: 'Upload successful!', percent: 100, processedBytes: fileSizeBytes, totalBytes: fileSizeBytes });
 
     return {
       downloadUrl,
@@ -602,10 +634,25 @@ export class DropgateClient {
       throw new DropgateValidationError('File ID is required.');
     }
 
-    const baseUrl = buildBaseUrl({ host, port, secure });
+    // 0) Get server info + compat
+    progress({ phase: 'server-info', text: 'Checking server...', processedBytes: 0, totalBytes: 0, percent: 0 });
+
+    const compat = await this.checkCompatibility({
+      host,
+      port,
+      secure,
+      timeoutMs,
+      signal,
+    });
+
+    const { baseUrl } = compat;
+    progress({ phase: 'server-compat', text: compat.message, processedBytes: 0, totalBytes: 0, percent: 0 });
+    if (!compat.compatible) {
+      throw new DropgateValidationError(compat.message);
+    }
 
     // 1) Fetch metadata
-    progress({ phase: 'metadata', text: 'Fetching file info...', receivedBytes: 0, totalBytes: 0, percent: 0 });
+    progress({ phase: 'metadata', text: 'Fetching file info...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
     const { signal: metaSignal, cleanup: metaCleanup } = makeAbortSignal(signal, timeoutMs);
     let metadata: FileMetadata;
@@ -661,7 +708,7 @@ export class DropgateClient {
         throw new DropgateValidationError('Web Crypto API not available for decryption.');
       }
 
-      progress({ phase: 'decrypting', text: 'Preparing decryption...', receivedBytes: 0, totalBytes: 0, percent: 0 });
+      progress({ phase: 'decrypting', text: 'Preparing decryption...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
       try {
         cryptoKey = await importKeyFromBase64(this.cryptoObj, keyB64, this.base64);
@@ -682,7 +729,7 @@ export class DropgateClient {
     }
 
     // 3) Download file content
-    progress({ phase: 'downloading', text: 'Starting download...', percent: 0, receivedBytes: 0, totalBytes });
+    progress({ phase: 'downloading', text: 'Starting download...', percent: 0, processedBytes: 0, totalBytes });
 
     const { signal: downloadSignal, cleanup: downloadCleanup } = makeAbortSignal(signal, timeoutMs);
     let receivedBytes = 0;
@@ -772,7 +819,7 @@ export class DropgateClient {
             phase: 'decrypting',
             text: `Downloading & decrypting... (${percent}%)`,
             percent,
-            receivedBytes,
+            processedBytes: receivedBytes,
             totalBytes,
           });
         }
@@ -811,7 +858,7 @@ export class DropgateClient {
             phase: 'downloading',
             text: `Downloading... (${percent}%)`,
             percent,
-            receivedBytes,
+            processedBytes: receivedBytes,
             totalBytes,
           });
         }
@@ -826,7 +873,7 @@ export class DropgateClient {
       downloadCleanup();
     }
 
-    progress({ phase: 'complete', text: 'Download complete!', percent: 100, receivedBytes, totalBytes });
+    progress({ phase: 'complete', text: 'Download complete!', percent: 100, processedBytes: receivedBytes, totalBytes });
 
     // Combine collected data if not using callback
     let data: Uint8Array | undefined;
@@ -857,9 +904,11 @@ export class DropgateClient {
       maxBackoffMs: number;
       timeoutMs: number;
       signal?: AbortSignal;
-      progress: (evt: ProgressEvent) => void;
+      progress: (evt: UploadProgressEvent) => void;
       chunkIndex: number;
       totalChunks: number;
+      chunkSize: number;
+      fileSizeBytes: number;
     }
   ): Promise<void> {
     const {
@@ -871,6 +920,8 @@ export class DropgateClient {
       progress,
       chunkIndex,
       totalChunks,
+      chunkSize,
+      fileSizeBytes,
     } = opts;
 
     let attemptsLeft = retries;
@@ -916,6 +967,8 @@ export class DropgateClient {
         }
 
         const attemptNumber = maxRetries - attemptsLeft + 1;
+        const processedBytes = chunkIndex * chunkSize;
+        const percent = (chunkIndex / totalChunks) * 100;
         let remaining = currentBackoff;
         const tick = 100;
         while (remaining > 0) {
@@ -923,6 +976,9 @@ export class DropgateClient {
           progress({
             phase: 'retry-wait',
             text: `Chunk upload failed. Retrying in ${secondsLeft}s... (${attemptNumber}/${maxRetries})`,
+            percent,
+            processedBytes,
+            totalBytes: fileSizeBytes,
             chunkIndex,
             totalChunks,
           });
@@ -933,6 +989,9 @@ export class DropgateClient {
         progress({
           phase: 'retry',
           text: `Chunk upload failed. Retrying now... (${attemptNumber}/${maxRetries})`,
+          percent,
+          processedBytes,
+          totalBytes: fileSizeBytes,
           chunkIndex,
           totalChunks,
         });

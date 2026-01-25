@@ -57,15 +57,26 @@ export interface ServerInfo {
 }
 
 /**
+ * Base progress event with common fields for all transfer operations.
+ * Provides a consistent interface for upload, download, and P2P progress tracking.
+ */
+export interface BaseProgressEvent {
+  /** Completion percentage (0-100). */
+  percent: number;
+  /** Bytes processed so far (sent, received, or uploaded). */
+  processedBytes: number;
+  /** Total bytes expected (may be 0 if unknown). */
+  totalBytes: number;
+}
+
+/**
  * Progress event emitted during upload operations.
  */
-export interface ProgressEvent {
-  /** Current phase of the operation (e.g., 'init', 'chunk', 'complete'). */
-  phase: string;
+export interface UploadProgressEvent extends BaseProgressEvent {
+  /** Current phase of the operation. */
+  phase: 'server-info' | 'server-compat' | 'crypto' | 'init' | 'chunk' | 'complete' | 'done' | 'retry-wait' | 'retry';
   /** Human-readable status text. */
   text?: string;
-  /** Completion percentage (0-100). */
-  percent?: number;
   /** Current chunk index (0-based). */
   chunkIndex?: number;
   /** Total number of chunks. */
@@ -221,7 +232,7 @@ export interface UploadOptions extends ServerTarget {
   /** Override the filename sent to the server. */
   filenameOverride?: string;
   /** Callback for progress updates. */
-  onProgress?: (evt: ProgressEvent) => void;
+  onProgress?: (evt: UploadProgressEvent) => void;
   /** AbortSignal to cancel the upload. */
   signal?: AbortSignal;
   /** Timeout settings for various upload phases. */
@@ -254,6 +265,8 @@ export interface GetServerInfoOptions extends ServerTarget {
   timeoutMs?: number;
   /** AbortSignal to cancel the request. */
   signal?: AbortSignal;
+  /** Custom fetch implementation (uses global fetch by default). */
+  fetchFn?: FetchFn;
 }
 
 /**
@@ -287,17 +300,11 @@ export interface FileMetadata {
 /**
  * Download progress event.
  */
-export interface DownloadProgressEvent {
+export interface DownloadProgressEvent extends BaseProgressEvent {
   /** Current phase of the download. */
-  phase: 'metadata' | 'downloading' | 'decrypting' | 'complete';
+  phase: 'server-info' | 'server-compat' | 'metadata' | 'downloading' | 'decrypting' | 'complete';
   /** Human-readable status text. */
   text?: string;
-  /** Bytes received so far. */
-  receivedBytes: number;
-  /** Total bytes expected (may be 0 if unknown). */
-  totalBytes: number;
-  /** Completion percentage (0-100). */
-  percent: number;
 }
 
 /**
