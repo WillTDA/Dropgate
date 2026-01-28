@@ -212,10 +212,21 @@ if (!gotTheLock) {
 
 
 function createWindow() {
+    // Restore saved window bounds or use defaults
+    const defaultBounds = {
+        width: 600,
+        height: 900
+    };
+    const savedBounds = store.get('windowBounds', defaultBounds);
+
     mainWindow = new BrowserWindow({
-        width: 500,
-        height: 900,
-        resizable: false,
+        width: savedBounds.width,
+        height: savedBounds.height,
+        x: savedBounds.x,
+        y: savedBounds.y,
+        minWidth: 400,
+        minHeight: 700,
+        resizable: true,
         title: "Dropgate Client",
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -227,6 +238,26 @@ function createWindow() {
 
     mainWindow.loadFile(path.join(__dirname, 'index.html'));
     // mainWindow.webContents.openDevTools();
+
+    // Save window bounds when resized or moved
+    const saveBounds = () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const bounds = mainWindow.getBounds();
+        store.set('windowBounds', bounds);
+    };
+
+    // Debounce saving to avoid excessive writes during resizing
+    let saveBoundsTimeout;
+    const debouncedSaveBounds = () => {
+        clearTimeout(saveBoundsTimeout);
+        saveBoundsTimeout = setTimeout(saveBounds, 500);
+    };
+
+    mainWindow.on('resize', debouncedSaveBounds);
+    mainWindow.on('move', debouncedSaveBounds);
+
+    // Save immediately on close
+    mainWindow.on('close', saveBounds);
 
     mainWindow.on('closed', () => {
         mainWindow = null;
@@ -618,8 +649,11 @@ function triggerBackgroundUpload(filePath, useE2EE) {
 
     const backgroundWindow = new BrowserWindow({
         show: false,  // use true for debugging!
-        width: 500,
-        height: 850,
+        width: 600,
+        height: 800,
+        minWidth: 400,
+        minHeight: 700,
+        resizable: true,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,

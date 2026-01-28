@@ -24,7 +24,10 @@ body {
 }
 
 .container {
-    max-width: 500px;
+    max-width: 100%;
+    width: 100%;
+    padding-left: 1rem;
+    padding-right: 1rem;
 }
 
 [data-bs-toggle="tooltip"] {
@@ -179,4 +182,44 @@ body.popup-window {
 .security-status-card.security-red {
     background: rgba(220, 53, 69, 0.1);
     border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
+/* Responsive Design */
+@media (max-width: 500px) {
+    body {
+        padding: 0.75rem !important;
+    }
+
+    .container {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+
+    h3 {
+        font-size: 1.25rem !important;
+    }
+
+    #drop-zone {
+        padding: 2rem !important;
+    }
+
+    #drop-zone p {
+        font-size: 0.9rem;
+    }
+
+    .security-status-card {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+    }
+
+    .security-status-card .material-icons-round {
+        font-size: 20px;
+    }
+}
+
+@media (min-width: 700px) {
+    .container {
+        max-width: 650px;
+        margin: 0 auto;
+    }
 }
