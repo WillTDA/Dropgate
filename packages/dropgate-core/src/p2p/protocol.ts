@@ -21,7 +21,6 @@ export type P2PMessageType =
     | 'ready'      // Receiver is ready to receive
     | 'chunk'      // Data chunk with sequence number
     | 'chunk_ack'  // Chunk acknowledgment (for flow control)
-    | 'progress'   // Progress update (v1 compatibility)
     | 'end'        // All chunks sent
     | 'end_ack'    // Transfer verified complete
     | 'ping'       // Heartbeat
@@ -104,15 +103,6 @@ export interface P2PEndAckMessage extends P2PMessageBase {
 }
 
 /**
- * Progress update from receiver (v1 compatibility).
- */
-export interface P2PProgressMessage extends P2PMessageBase {
-    t: 'progress';
-    received: number;
-    total: number;
-}
-
-/**
  * Heartbeat ping.
  */
 export interface P2PPingMessage extends P2PMessageBase {
@@ -172,7 +162,6 @@ export type P2PMessage =
     | P2PReadyMessage
     | P2PChunkMessage
     | P2PChunkAckMessage
-    | P2PProgressMessage
     | P2PEndMessage
     | P2PEndAckMessage
     | P2PPingMessage
@@ -189,7 +178,7 @@ export function isP2PMessage(value: unknown): value is P2PMessage {
     if (!value || typeof value !== 'object') return false;
     const msg = value as Record<string, unknown>;
     return typeof msg.t === 'string' && [
-        'hello', 'meta', 'ready', 'chunk', 'chunk_ack', 'progress',
+        'hello', 'meta', 'ready', 'chunk', 'chunk_ack',
         'end', 'end_ack', 'ping', 'pong', 'error',
         'cancelled', 'resume', 'resume_ack'
     ].includes(msg.t);
@@ -197,14 +186,11 @@ export function isP2PMessage(value: unknown): value is P2PMessage {
 
 /**
  * Check if protocol versions are compatible.
- * Currently requires exact match, but can be relaxed for minor versions.
  */
 export function isProtocolCompatible(
     senderVersion: number,
     receiverVersion: number
 ): boolean {
-    // For now, require exact match
-    // In the future, could allow minor version differences
     return senderVersion === receiverVersion;
 }
 

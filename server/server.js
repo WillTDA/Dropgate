@@ -660,7 +660,7 @@ if (enableUpload) {
             const newDownloadCount = (fileInfo.downloadCount || 0) + 1;
             const maxDl = fileInfo.maxDownloads ?? 1;
 
-            // Check if we should delete the file (maxDownloads reached, or maxDownloads is 1 for legacy behavior)
+            // Check if we should delete the file (maxDownloads reached)
             if (maxDl > 0 && newDownloadCount >= maxDl) {
                 // Update storage immediately
                 currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);

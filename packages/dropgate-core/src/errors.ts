@@ -12,19 +12,10 @@ export class DropgateError extends Error {
   readonly details?: unknown;
 
   constructor(message: string, opts: DropgateErrorOptions = {}) {
-    super(message);
+    super(message, opts.cause !== undefined ? { cause: opts.cause } : undefined);
     this.name = this.constructor.name;
     this.code = opts.code || 'DROPGATE_ERROR';
     this.details = opts.details;
-    if (opts.cause !== undefined) {
-      // Use Object.defineProperty for cause to maintain compatibility
-      Object.defineProperty(this, 'cause', {
-        value: opts.cause,
-        writable: false,
-        enumerable: false,
-        configurable: true,
-      });
-    }
   }
 }
 

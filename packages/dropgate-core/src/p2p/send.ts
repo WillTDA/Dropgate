@@ -23,14 +23,9 @@ import {
 
 /**
  * Generate a unique session ID for transfer tracking.
- * Uses crypto.randomUUID if available, falls back to timestamp + random.
  */
 function generateSessionId(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  // Fallback for environments without crypto.randomUUID
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  return crypto.randomUUID();
 }
 
 /**
@@ -346,7 +341,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     conn.send(data);
     sentBytes += data.byteLength;
 
-    // Legacy flow control using buffer thresholds
+    // Buffer-based flow control using data channel thresholds
     const dc = conn._dc;
     if (dc && bufferHighWaterMark > 0) {
       while (dc.bufferedAmount > bufferHighWaterMark) {
@@ -506,11 +501,6 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
           // Heartbeat response received, connection is alive
           break;
 
-        case 'progress':
-          // v1 compatibility: receiver sends progress updates
-          reportProgress({ received: msg.received || 0, total: msg.total || 0 });
-          break;
-
         case 'error':
           safeError(new DropgateNetworkError(msg.message || 'Receiver reported an error.'));
           break;
@@ -547,9 +537,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
         if (isStopped()) return;
 
         if (receiverVersion === null) {
-          // Receiver didn't respond with hello - might be v1 client
-          // Fall back to v1 behaviour (skip handshake)
-          console.warn('[P2P Send] Receiver did not send hello, assuming v1 protocol');
+          throw new DropgateNetworkError('Receiver did not respond to handshake.');
         } else if (receiverVersion !== P2P_PROTOCOL_VERSION) {
           throw new DropgateNetworkError(
             `Protocol version mismatch: sender v${P2P_PROTOCOL_VERSION}, receiver v${receiverVersion}`

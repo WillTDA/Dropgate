@@ -130,14 +130,10 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   let total = 0;
   let received = 0;
   let currentSessionId: string | null = null;
-  let senderProtocolVersion: number | null = null;
-  let lastProgressSentAt = 0;
-  const progressIntervalMs = 120;
   let writeQueue = Promise.resolve();
   let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   let activeConn: DataConnection | null = null;
 
-  // Chunk tracking for v2 protocol
   let pendingChunk: P2PChunkMessage | null = null;
 
   /**
@@ -246,14 +242,12 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     cleanup();
   };
 
-  // Send chunk acknowledgment (v2 protocol)
+  // Send chunk acknowledgment
   const sendChunkAck = (conn: DataConnection, seq: number): void => {
-    if (senderProtocolVersion && senderProtocolVersion >= 2) {
-      try {
-        conn.send({ t: 'chunk_ack', seq, received });
-      } catch {
-        // Ignore send errors
-      }
+    try {
+      conn.send({ t: 'chunk_ack', seq, received });
+    } catch {
+      // Ignore send errors
     }
   };
 
@@ -319,20 +313,9 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               const percent = total ? Math.min(100, (received / total) * 100) : 0;
               onProgress?.({ processedBytes: received, totalBytes: total, percent });
 
-              // Send chunk acknowledgment for v2 protocol
+              // Send chunk acknowledgment
               if (chunkSeq >= 0) {
                 sendChunkAck(conn, chunkSeq);
-              }
-
-              // Send progress updates (for v1 compatibility and UI feedback)
-              const now = Date.now();
-              if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
-                lastProgressSentAt = now;
-                try {
-                  conn.send({ t: 'progress', received, total });
-                } catch {
-                  // Ignore send errors
-                }
               }
             })
             .catch((err) => {
@@ -357,17 +340,14 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
         switch (msg.t) {
           case 'hello':
-            // Store sender's protocol version
-            senderProtocolVersion = msg.protocolVersion;
             currentSessionId = msg.sessionId || null;
             transitionTo('negotiating');
             onStatus?.({ phase: 'waiting', message: 'Waiting for file details...' });
             break;
 
           case 'meta': {
-            // Legacy/fallback: might receive meta before hello from v1 senders
-            if (state === 'handshaking') {
-              transitionTo('negotiating');
+            if (state !== 'negotiating') {
+              return;
             }
 
             // Session ID validation - reject if we're busy with a different session
@@ -415,7 +395,6 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
           }
 
           case 'chunk':
-            // v2 protocol: chunk header precedes binary data
             pendingChunk = msg as P2PChunkMessage;
             break;
 
@@ -444,41 +423,27 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               throw err;
             }
 
-            // Send FIRST end_ack immediately so sender can complete
-            // Then mark ourselves as complete to protect against close handler race
-            // Then send additional acks for reliability (fire-and-forget)
-            if (senderProtocolVersion && senderProtocolVersion >= 2) {
-              try {
-                conn.send({ t: 'end_ack', received, total });
-              } catch {
-                // Ignore send errors
-              }
-            } else {
-              // v1 fallback: single ack
-              try {
-                conn.send({ t: 'ack', phase: 'end', received, total });
-              } catch {
-                // Ignore send errors
-              }
+            // Send end_ack immediately so sender can complete
+            try {
+              conn.send({ t: 'end_ack', received, total });
+            } catch {
+              // Ignore send errors
             }
 
-            // Now mark as completed - this protects against close handler race
+            // Mark as completed - protects against close handler race
             safeComplete({ received, total });
 
             // Send additional acks for reliability (fire-and-forget, best effort)
-            if (senderProtocolVersion && senderProtocolVersion >= 2) {
-              // Send 2 more acks with delays
-              (async () => {
-                for (let i = 0; i < 2; i++) {
-                  await sleep(P2P_END_ACK_RETRY_DELAY_MS);
-                  try {
-                    conn.send({ t: 'end_ack', received, total });
-                  } catch {
-                    break; // Connection closed
-                  }
+            (async () => {
+              for (let i = 0; i < 2; i++) {
+                await sleep(P2P_END_ACK_RETRY_DELAY_MS);
+                try {
+                  conn.send({ t: 'end_ack', received, total });
+                } catch {
+                  break; // Connection closed
                 }
-              })().catch(() => { });
-            }
+              }
+            })().catch(() => { });
             break;
 
           case 'error':
