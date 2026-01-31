@@ -132,7 +132,6 @@ document.addEventListener('visibilitychange', () => {
 const coreClient = new DropgateClient({ clientVersion: '3.0.0' });
 
 function formatBytes(bytes) {
-  console.log(bytes)
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
   const k = 1000;
