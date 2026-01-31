@@ -29,11 +29,37 @@ let pendingSendReady = null;
 let fileName = null;
 let p2pSession = null;
 
+// Title progress tracking
+const originalTitle = document.title;
+let currentTransferProgress = null; // { percent, received, total }
+
+const updateTitleProgress = (percent) => {
+  if (percent >= 0 && percent < 100) {
+    document.title = `${Math.floor(percent)}% - ${originalTitle}`;
+  } else {
+    document.title = originalTitle;
+  }
+};
+
+const resetTitleProgress = () => {
+  document.title = originalTitle;
+  currentTransferProgress = null;
+};
+
+// Visibility change handler - sync UI immediately when tab becomes visible
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentTransferProgress) {
+    // Tab became visible and we have an active transfer
+    // Force UI update
+    setProgress();
+  }
+});
+
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
   const k = 1000;
-  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
   return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
@@ -41,6 +67,11 @@ function formatBytes(bytes) {
 
 const setProgress = () => {
   const pct = total > 0 ? Math.min(100, (received / total) * 100) : 0;
+
+  // Update title and store progress state
+  updateTitleProgress(pct);
+  currentTransferProgress = { percent: pct, received, total };
+
   elBar.style.width = `${pct}%`;
   elBytes.textContent = `${formatBytes(received)} / ${formatBytes(total)}`;
 };
@@ -221,6 +252,7 @@ async function start() {
       },
       onComplete: async () => {
         transferCompleted = true;
+        resetTitleProgress();
 
         // Close the writer
         if (writer) {
@@ -248,6 +280,7 @@ async function start() {
       },
       onError: (err) => {
         if (transferCompleted) return;
+        resetTitleProgress();
         console.error(err);
 
         // Abort the writer on error
@@ -267,10 +300,11 @@ async function start() {
           showError('Connection Failed', 'Could not connect to the sender. Check the code, ensure the sender is online, and try again.');
           return;
         }
-        showError('Transfer Error', 'An error occurred during the transfer.');
+        showError('Transfer Failed', err?.message || 'An error occurred during transfer.');
       },
       onDisconnect: () => {
         if (transferCompleted) return;
+        resetTitleProgress();
 
         // Abort the writer on disconnect
         if (writer) {
@@ -288,6 +322,7 @@ async function start() {
       },
       onCancel: (evt) => {
         if (transferCompleted) return;
+        resetTitleProgress();
 
         // Abort the writer on cancellation
         if (writer) {

@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-2.2.1-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-3.0.0-brightgreen?style=flat-square)
 ![typescript](https://img.shields.io/badge/TypeScript-5.0+-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -52,7 +52,7 @@ The package ships with multiple build targets:
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.2.1' });
+const client = new DropgateClient({ clientVersion: '3.0.0' });
 
 const result = await client.uploadFile({
   host: 'dropgate.link',
@@ -91,7 +91,7 @@ console.log('P2P enabled:', serverInfo.capabilities?.p2p?.enabled);
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.2.1' });
+const client = new DropgateClient({ clientVersion: '3.0.0' });
 
 // checkCompatibility fetches server info internally and compares versions
 const compat = await client.checkCompatibility({
@@ -128,7 +128,14 @@ const session = await startP2PSend({
   },
   onComplete: () => console.log('Transfer complete!'),
   onError: (err) => console.error('Error:', err),
+  onCancel: ({ cancelledBy }) => console.log(`Cancelled by ${cancelledBy}`),
+  onDisconnect: () => console.log('Receiver disconnected'),
 });
+
+// Session control methods
+console.log('Status:', session.getStatus()); // 'listening', 'transferring', etc.
+console.log('Bytes sent:', session.getBytesSent());
+console.log('Session ID:', session.sessionId);
 
 // To cancel:
 // session.stop();
@@ -152,13 +159,25 @@ const session = await startP2PReceive({
   },
   onData: async (chunk) => {
     // Consumer handles file writing (e.g., streamSaver, fs.write)
+    // This is called for each chunk — stream-through for memory efficiency
     await writer.write(chunk);
   },
   onProgress: ({ processedBytes, totalBytes, percent }) => {
     console.log(`Receiving: ${percent.toFixed(1)}%`);
   },
-  onComplete: () => console.log('Transfer complete!'),
+  onComplete: ({ received, total }) => console.log(`Complete! ${received}/${total}`),
+  onCancel: ({ cancelledBy }) => console.log(`Cancelled by ${cancelledBy}`),
+  onError: (err) => console.error('Error:', err),
+  onDisconnect: () => console.log('Sender disconnected'),
 });
+
+// Session control methods
+console.log('Status:', session.getStatus()); // 'connecting', 'transferring', etc.
+console.log('Bytes received:', session.getBytesReceived());
+console.log('Total bytes:', session.getTotalBytes());
+
+// To cancel:
+// session.stop();
 ```
 
 ### 📥 P2P File Transfer with Preview (Receiver)
@@ -203,7 +222,7 @@ const session = await startP2PReceive({
 ```javascript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ clientVersion: '2.2.1' });
+const client = new DropgateClient({ clientVersion: '3.0.0' });
 
 // Download with streaming (for large files)
 const result = await client.downloadFile({
@@ -325,6 +344,16 @@ The P2P functions are designed to be **headless**. The consumer is responsible f
 3. **UI Updates**: React to callbacks (`onProgress`, `onStatus`, etc.)
 
 This design allows the library to work in any environment (browser, Electron, Node.js with WebRTC).
+
+### Large File Support
+
+The P2P implementation is designed for **unlimited file sizes** with constant memory usage:
+
+- **Stream-through architecture**: Chunks flow immediately to `onData`, no buffering
+- **Flow control**: Sender pauses when receiver's write queue backs up
+- **WebRTC reliability**: SCTP provides reliable, ordered, checksum-verified delivery
+
+> **Note**: For large files, always use the `onData` callback approach rather than buffering in memory.
 
 ## 📜 License
 

@@ -100,13 +100,43 @@ const state = {
   uploadSession: null,
 };
 
-const coreClient = new DropgateClient({ clientVersion: '2.2.1' });
+// Title progress tracking
+const originalTitle = document.title;
+let currentTransferProgress = null; // { percent, doneBytes, totalBytes }
+
+const updateTitleProgress = (percent) => {
+  if (percent >= 0 && percent < 100) {
+    document.title = `${Math.floor(percent)}% - ${originalTitle}`;
+  } else {
+    document.title = originalTitle;
+  }
+};
+
+const resetTitleProgress = () => {
+  document.title = originalTitle;
+  currentTransferProgress = null;
+};
+
+// Visibility change handler - sync UI immediately when tab becomes visible
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentTransferProgress) {
+    // Tab became visible and we have an active transfer
+    // Force UI update with current progress
+    const { percent, doneBytes, totalBytes, showProgress: showProgressFn } = currentTransferProgress;
+    if (showProgressFn) {
+      showProgressFn(percent, doneBytes, totalBytes);
+    }
+  }
+});
+
+const coreClient = new DropgateClient({ clientVersion: '3.0.0' });
 
 function formatBytes(bytes) {
+  console.log(bytes)
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
   const k = 1000;
-  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
   return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
@@ -707,6 +737,26 @@ async function startStandardUpload() {
       })(),
       onProgress: ({ phase, text, percent }) => {
         const p = (typeof percent === 'number') ? percent : 0;
+
+        // Update title and store progress for visibility handler
+        updateTitleProgress(p);
+        currentTransferProgress = {
+          percent: p,
+          doneBytes: Math.floor((p / 100) * file.size),
+          totalBytes: file.size,
+          showProgress: (pct, done, total) => {
+            showProgress({
+              title: 'Uploading',
+              sub: text || phase,
+              percent: pct,
+              doneBytes: done,
+              totalBytes: total,
+              icon: 'cloud_upload',
+              iconColor: 'text-primary',
+            });
+          }
+        };
+
         showProgress({
           title: 'Uploading',
           sub: text || phase,
@@ -718,6 +768,7 @@ async function startStandardUpload() {
         });
       },
       onCancel: () => {
+        resetTitleProgress();
         showToast('Upload cancelled.', 'warning');
         resetToMain();
       },
@@ -729,6 +780,7 @@ async function startStandardUpload() {
 
     // Wire up cancel button
     els.cancelStandardUpload.onclick = () => {
+      resetTitleProgress();
       session.cancel('User cancelled upload.');
       state.uploadSession = null;
       els.cancelStandardUpload.style.display = 'none';
@@ -740,12 +792,14 @@ async function startStandardUpload() {
     els.cancelStandardUpload.style.display = 'none';
     state.uploadSession = null;
 
+    resetTitleProgress();
     showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'cloud_upload' });
     showShare({ link: result.downloadUrl });
   } catch (err) {
     // Hide cancel button on error
     els.cancelStandardUpload.style.display = 'none';
     state.uploadSession = null;
+    resetTitleProgress();
 
     // Check if it was a cancellation (handle both native AbortError and DropgateAbortError)
     if (err?.name === 'AbortError' || err?.code === 'ABORT_ERROR') {
@@ -852,9 +906,21 @@ async function startP2PSendFlow() {
       }
     },
     onProgress: ({ processedBytes, totalBytes, percent }) => {
+      // Update title and store progress for visibility handler
+      updateTitleProgress(percent);
+      currentTransferProgress = {
+        percent,
+        doneBytes: processedBytes,
+        totalBytes,
+        showProgress: (pct, done, total) => {
+          showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent: pct, doneBytes: done, totalBytes: total, icon: 'sync_alt', iconColor: 'text-primary' });
+        }
+      };
+
       showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent, doneBytes: processedBytes, totalBytes, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
       stopP2P();
       showShare({
@@ -865,11 +931,13 @@ async function startP2PSendFlow() {
     },
     onError: (err) => {
       console.error(err);
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
       showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
       stopP2P();
     },
     onDisconnect: () => {
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
       showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'link_off', iconColor: 'text-warning' });
       stopP2P();
@@ -888,6 +956,7 @@ async function startP2PSendFlow() {
   els.copyP2PLink.onclick = () => copyToClipboard(els.p2pLink.value).then(() => showToast('Copied link.'));
   els.qrP2PLink.onclick = () => showQRModal(els.p2pLink.value);
   els.cancelP2P.onclick = () => {
+    resetTitleProgress();
     stopP2P();
     showToast('Transfer cancelled.', 'warning');
     resetToMain();

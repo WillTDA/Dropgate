@@ -11,9 +11,11 @@ import type { FileSource, ServerInfo, CryptoAdapter, BaseProgressEvent } from '.
 export type P2PSendState =
   | 'initializing'  // Peer is being created
   | 'listening'     // Waiting for receiver to connect
+  | 'handshaking'   // Exchanging protocol version
   | 'negotiating'   // Connected, sending metadata, waiting for ready
   | 'transferring'  // Actively sending file data
   | 'finishing'     // Sent end message, waiting for ack
+  | 'awaiting_ack'  // Waiting for final end_ack confirmation
   | 'completed'     // Transfer successful
   | 'cancelled'     // Transfer cancelled by user
   | 'closed';       // Session ended (success, error, or stopped)
@@ -24,6 +26,7 @@ export type P2PSendState =
 export type P2PReceiveState =
   | 'initializing'  // Peer is being created
   | 'connecting'    // Connecting to sender
+  | 'handshaking'   // Exchanging protocol version
   | 'negotiating'   // Connected, waiting for metadata
   | 'transferring'  // Actively receiving file data
   | 'completed'     // Transfer successful
@@ -39,7 +42,7 @@ export type P2PReceiveState =
  * Consumer must provide this constructor to P2P functions.
  */
 export interface PeerConstructor {
-  new (id?: string, options?: PeerOptions): PeerInstance;
+  new(id?: string, options?: PeerOptions): PeerInstance;
 }
 
 /**
@@ -140,10 +143,10 @@ export interface P2PStatusEvent {
 }
 
 /** Progress event for P2P send operations. */
-export interface P2PSendProgressEvent extends BaseProgressEvent {}
+export interface P2PSendProgressEvent extends BaseProgressEvent { }
 
 /** Progress event for P2P receive operations. */
-export interface P2PReceiveProgressEvent extends BaseProgressEvent {}
+export interface P2PReceiveProgressEvent extends BaseProgressEvent { }
 
 /** Metadata event when receiving a file. */
 export interface P2PMetadataEvent {
@@ -165,6 +168,30 @@ export interface P2PCancellationEvent {
   cancelledBy: 'sender' | 'receiver';
   /** Optional cancellation message. */
   message?: string;
+}
+
+/** Connection health event for monitoring. */
+export interface P2PConnectionHealthEvent {
+  /** ICE connection state. */
+  iceConnectionState: 'connected' | 'disconnected' | 'failed' | 'checking' | 'new' | 'closed';
+  /** Estimated round-trip time in milliseconds. */
+  rtt?: number;
+  /** Bytes currently buffered waiting to send. */
+  bufferedAmount?: number;
+  /** Milliseconds since last activity. */
+  lastActivityMs: number;
+}
+
+/** Resumable transfer info. */
+export interface P2PResumeInfo {
+  /** Session ID to resume. */
+  sessionId: string;
+  /** Bytes already received in previous session. */
+  receivedBytes: number;
+  /** Total bytes expected. */
+  totalBytes: number;
+  /** Whether resume is possible. */
+  canResume: boolean;
 }
 
 // ============================================================================
@@ -211,6 +238,16 @@ export interface P2PSendOptions extends P2PServerConfig {
   onDisconnect?: () => void;
   /** Callback when transfer is cancelled by either party. */
   onCancel?: (evt: P2PCancellationEvent) => void;
+  /** Enable chunk-level acknowledgments for flow control (default: true). */
+  chunkAcknowledgments?: boolean;
+  /** Maximum unacknowledged chunks before pausing (default: 32). */
+  maxUnackedChunks?: number;
+  /** ICE restart timeout in ms (default: 10000). */
+  iceRestartTimeoutMs?: number;
+  /** Connection health monitoring callback. */
+  onConnectionHealth?: (evt: P2PConnectionHealthEvent) => void;
+  /** Called when receiver requests resume from offset. */
+  onResumeRequest?: (info: P2PResumeInfo) => boolean;
 }
 
 /**

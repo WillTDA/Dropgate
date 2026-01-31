@@ -83,7 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!Number.isFinite(bytes)) return '0 bytes';
             if (bytes === 0) return '0 bytes';
             const k = 1000;
-            const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+            const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             const v = bytes / Math.pow(k, i);
             return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;

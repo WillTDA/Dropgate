@@ -4,6 +4,36 @@ export { startP2PReceive } from './receive.js';
 export { generateP2PCode, isP2PCodeLike, isLocalhostHostname, isSecureContextForP2P } from './utils.js';
 export { buildPeerOptions, createPeerWithRetries, resolvePeerConfig } from './helpers.js';
 
+// Protocol exports
+export {
+  P2P_PROTOCOL_VERSION,
+  P2P_CHUNK_SIZE,
+  P2P_MAX_UNACKED_CHUNKS,
+  P2P_END_ACK_TIMEOUT_MS,
+  P2P_END_ACK_RETRIES,
+  isP2PMessage,
+  isProtocolCompatible,
+} from './protocol.js';
+
+export type {
+  P2PMessageType,
+  P2PMessage,
+  P2PMessageBase,
+  P2PHelloMessage,
+  P2PMetaMessage,
+  P2PReadyMessage,
+  P2PChunkMessage,
+  P2PChunkAckMessage,
+  P2PEndMessage,
+  P2PEndAckMessage,
+  P2PPingMessage,
+  P2PPongMessage,
+  P2PErrorMessage,
+  P2PCancelledMessage,
+  P2PResumeMessage,
+  P2PResumeAckMessage,
+} from './protocol.js';
+
 // Re-export types
 export type {
   // State machine types
@@ -24,6 +54,9 @@ export type {
   P2PReceiveProgressEvent,
   P2PMetadataEvent,
   P2PReceiveCompleteEvent,
+  P2PConnectionHealthEvent,
+  P2PResumeInfo,
+  P2PCancellationEvent,
   // P2P options and sessions
   P2PSendOptions,
   P2PSendSession,
