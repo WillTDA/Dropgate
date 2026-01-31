@@ -1,6 +1,3 @@
-process.env.ENABLE_UPLOAD = 'true';
-process.env.UPLOAD_MAX_FILE_SIZE_MB = '1073741824';
-
 const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
 const normalizeLogLevel = (value) => {
     const upper = String(value || '').trim().toUpperCase();
