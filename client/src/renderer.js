@@ -621,6 +621,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     uploadStatus.textContent = compat.message;
                     uploadStatus.className = 'form-text mt-1 text-danger';
                     lastServerCheck = { compatible: false, message: compat.message };
+                    updateUploadabilityState(false, compat.message);
                     return lastServerCheck;
                 }
 
