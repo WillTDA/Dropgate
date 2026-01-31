@@ -695,8 +695,6 @@ async function startStandardUpload() {
     return;
   }
 
-  els.tagline.textContent = 'Standard Upload';
-
   // Check if E2EE is available - show warning if not
   const hasE2EE = state.uploadEnabled && state.e2ee && window.isSecureContext;
   if (!hasE2EE) {
@@ -728,6 +726,7 @@ async function startStandardUpload() {
   }
 
   const lifetimeMs = lifetimeMsFromUI();
+  els.tagline.textContent = 'Standard Upload';
 
   showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
 
@@ -970,9 +969,10 @@ async function startP2PSendFlow() {
     resetToMain();
   };
   els.cancelP2PSend.onclick = () => {
-    if (state.p2pSession) {
-      state.p2pSession.stop();
-    }
+    resetTitleProgress();
+    stopP2P();
+    showToast('Transfer cancelled.', 'warning');
+    resetToMain();
   };
 }
 

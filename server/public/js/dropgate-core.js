@@ -1,3 +1,7 @@
+var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+
 // src/constants.ts
 var DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
 var AES_GCM_IV_BYTES = 12;
@@ -8,18 +12,12 @@ var MAX_IN_MEMORY_DOWNLOAD_BYTES = 100 * 1024 * 1024;
 // src/errors.ts
 var DropgateError = class extends Error {
   constructor(message, opts = {}) {
-    super(message);
+    super(message, opts.cause !== void 0 ? { cause: opts.cause } : void 0);
+    __publicField(this, "code");
+    __publicField(this, "details");
     this.name = this.constructor.name;
     this.code = opts.code || "DROPGATE_ERROR";
     this.details = opts.details;
-    if (opts.cause !== void 0) {
-      Object.defineProperty(this, "cause", {
-        value: opts.cause,
-        writable: false,
-        enumerable: false,
-        configurable: true
-      });
-    }
   }
 };
 var DropgateValidationError = class extends DropgateError {
@@ -491,6 +489,18 @@ var DropgateClient = class {
    * @throws {DropgateValidationError} If clientVersion is missing or invalid.
    */
   constructor(opts) {
+    /** Client version string for compatibility checking. */
+    __publicField(this, "clientVersion");
+    /** Chunk size in bytes for upload splitting. */
+    __publicField(this, "chunkSize");
+    /** Fetch implementation used for HTTP requests. */
+    __publicField(this, "fetchFn");
+    /** Crypto implementation for encryption operations. */
+    __publicField(this, "cryptoObj");
+    /** Base64 encoder/decoder for binary data. */
+    __publicField(this, "base64");
+    /** Optional logger for debug output. */
+    __publicField(this, "logger");
     if (!opts || typeof opts.clientVersion !== "string") {
       throw new DropgateValidationError(
         "DropgateClient requires clientVersion (string)."
@@ -1349,7 +1359,6 @@ function isP2PMessage(value) {
     "ready",
     "chunk",
     "chunk_ack",
-    "progress",
     "end",
     "end_ack",
     "ping",
@@ -1369,10 +1378,7 @@ var P2P_CLOSE_GRACE_PERIOD_MS = 2e3;
 
 // src/p2p/send.ts
 function generateSessionId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+  return crypto.randomUUID();
 }
 var ALLOWED_TRANSITIONS = {
   initializing: ["listening", "closed"],
@@ -1653,7 +1659,7 @@ async function startP2PSend(opts) {
     }
     activeConn = conn;
     transitionTo("handshaking");
-    onStatus?.({ phase: "connected", message: "Receiver connected. Exchanging protocol version..." });
+    onStatus?.({ phase: "connected", message: "Receiver connected." });
     lastActivityTime = Date.now();
     let helloResolve = null;
     let readyResolve = null;
@@ -1690,9 +1696,6 @@ async function startP2PSend(opts) {
           break;
         case "pong":
           break;
-        case "progress":
-          reportProgress({ received: msg.received || 0, total: msg.total || 0 });
-          break;
         case "error":
           safeError(new DropgateNetworkError(msg.message || "Receiver reported an error."));
           break;
@@ -1719,7 +1722,7 @@ async function startP2PSend(opts) {
         ]);
         if (isStopped()) return;
         if (receiverVersion === null) {
-          console.warn("[P2P Send] Receiver did not send hello, assuming v1 protocol");
+          throw new DropgateNetworkError("Receiver did not respond to handshake.");
         } else if (receiverVersion !== P2P_PROTOCOL_VERSION) {
           throw new DropgateNetworkError(
             `Protocol version mismatch: sender v${P2P_PROTOCOL_VERSION}, receiver v${receiverVersion}`
@@ -1886,9 +1889,6 @@ async function startP2PReceive(opts) {
   let total = 0;
   let received = 0;
   let currentSessionId = null;
-  let senderProtocolVersion = null;
-  let lastProgressSentAt = 0;
-  const progressIntervalMs = 120;
   let writeQueue = Promise.resolve();
   let watchdogTimer = null;
   let activeConn = null;
@@ -1965,11 +1965,9 @@ async function startP2PReceive(opts) {
     cleanup();
   };
   const sendChunkAck = (conn, seq) => {
-    if (senderProtocolVersion && senderProtocolVersion >= 2) {
-      try {
-        conn.send({ t: "chunk_ack", seq, received });
-      } catch {
-      }
+    try {
+      conn.send({ t: "chunk_ack", seq, received });
+    } catch {
     }
   };
   peer.on("error", (err) => {
@@ -1981,7 +1979,7 @@ async function startP2PReceive(opts) {
     activeConn = conn;
     conn.on("open", () => {
       transitionTo("handshaking");
-      onStatus?.({ phase: "connected", message: "Connected. Exchanging protocol version..." });
+      onStatus?.({ phase: "connected", message: "Connected." });
       conn.send({
         t: "hello",
         protocolVersion: P2P_PROTOCOL_VERSION,
@@ -2017,14 +2015,6 @@ async function startP2PReceive(opts) {
             if (chunkSeq >= 0) {
               sendChunkAck(conn, chunkSeq);
             }
-            const now = Date.now();
-            if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
-              lastProgressSentAt = now;
-              try {
-                conn.send({ t: "progress", received, total });
-              } catch {
-              }
-            }
           }).catch((err) => {
             try {
               conn.send({
@@ -2041,14 +2031,13 @@ async function startP2PReceive(opts) {
         const msg = data;
         switch (msg.t) {
           case "hello":
-            senderProtocolVersion = msg.protocolVersion;
             currentSessionId = msg.sessionId || null;
             transitionTo("negotiating");
             onStatus?.({ phase: "waiting", message: "Waiting for file details..." });
             break;
           case "meta": {
-            if (state === "handshaking") {
-              transitionTo("negotiating");
+            if (state !== "negotiating") {
+              return;
             }
             if (currentSessionId && msg.sessionId && msg.sessionId !== currentSessionId) {
               try {
@@ -2104,31 +2093,22 @@ async function startP2PReceive(opts) {
               }
               throw err;
             }
-            if (senderProtocolVersion && senderProtocolVersion >= 2) {
-              try {
-                conn.send({ t: "end_ack", received, total });
-              } catch {
-              }
-            } else {
-              try {
-                conn.send({ t: "ack", phase: "end", received, total });
-              } catch {
-              }
+            try {
+              conn.send({ t: "end_ack", received, total });
+            } catch {
             }
             safeComplete({ received, total });
-            if (senderProtocolVersion && senderProtocolVersion >= 2) {
-              (async () => {
-                for (let i = 0; i < 2; i++) {
-                  await sleep(P2P_END_ACK_RETRY_DELAY_MS);
-                  try {
-                    conn.send({ t: "end_ack", received, total });
-                  } catch {
-                    break;
-                  }
+            (async () => {
+              for (let i = 0; i < 2; i++) {
+                await sleep(P2P_END_ACK_RETRY_DELAY_MS);
+                try {
+                  conn.send({ t: "end_ack", received, total });
+                } catch {
+                  break;
                 }
-              })().catch(() => {
-              });
-            }
+              }
+            })().catch(() => {
+            });
             break;
           case "error":
             throw new DropgateNetworkError(msg.message || "Sender reported an error.");

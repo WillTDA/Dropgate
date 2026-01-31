@@ -448,7 +448,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
     activeConn = conn;
     transitionTo('handshaking');
-    onStatus?.({ phase: 'connected', message: 'Receiver connected. Exchanging protocol version...' });
+    onStatus?.({ phase: 'connected', message: 'Receiver connected.' });
     lastActivityTime = Date.now();
 
     let helloResolve: ((version: number) => void) | null = null;

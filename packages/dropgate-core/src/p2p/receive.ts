@@ -262,7 +262,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
     conn.on('open', () => {
       transitionTo('handshaking');
-      onStatus?.({ phase: 'connected', message: 'Connected. Exchanging protocol version...' });
+      onStatus?.({ phase: 'connected', message: 'Connected.' });
 
       // Send our hello immediately
       conn.send({
