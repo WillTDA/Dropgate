@@ -370,12 +370,6 @@ export class DropgateClient {
           }
         };
 
-        if (!this.cryptoObj?.subtle) {
-          throw new DropgateValidationError(
-            'Web Crypto API not available (crypto.subtle).'
-          );
-        }
-
         const fileSizeBytes = file.size;
 
         // 0) Get server info + compat
@@ -414,6 +408,11 @@ export class DropgateClient {
         let transmittedFilename = filename;
 
         if (effectiveEncrypt) {
+          if (!this.cryptoObj?.subtle) {
+            throw new DropgateValidationError(
+              'Web Crypto API not available (crypto.subtle). Encryption requires a secure context (HTTPS or localhost).'
+            );
+          }
           progress({ phase: 'crypto', text: 'Generating encryption key...', percent: 0, processedBytes: 0, totalBytes: fileSizeBytes });
           try {
             cryptoKey = await generateAesGcmKey(this.cryptoObj);
