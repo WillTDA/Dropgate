@@ -661,17 +661,26 @@ function showQRModal(url) {
 }
 
 function copyToClipboard(value) {
-  return navigator.clipboard?.writeText(value).catch(() => {
-    // fallback
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-  });
+  if (navigator.clipboard) {
+    return navigator.clipboard.writeText(value).catch(() => {
+      // fallback
+      copyToClipboardFallback(value);
+    });
+  }
+  // navigator.clipboard unavailable (insecure context)
+  copyToClipboardFallback(value);
+  return Promise.resolve();
+}
+
+function copyToClipboardFallback(value) {
+  const ta = document.createElement('textarea');
+  ta.value = value;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
 }
 
 async function startStandardUpload() {
