@@ -2693,6 +2693,7 @@ var DropgateClient = class {
           currentFileName: name
         });
         zipWriter.startFile(name);
+        const baseReceivedBytes = totalReceivedBytes;
         const bytesReceived = await this._streamFileIntoCallback(
           baseUrl,
           fileMeta.fileId,
@@ -2703,6 +2704,19 @@ var DropgateClient = class {
           timeoutMs,
           (chunk) => {
             zipWriter.writeChunk(chunk);
+          },
+          (fileBytes) => {
+            const current = baseReceivedBytes + fileBytes;
+            progress({
+              phase: "zipping",
+              text: `Downloading ${name}...`,
+              percent: totalBytes > 0 ? current / totalBytes * 100 : 0,
+              processedBytes: current,
+              totalBytes,
+              fileIndex: fi,
+              totalFiles: bundleMeta.files.length,
+              currentFileName: name
+            });
           }
         );
         zipWriter.endFile();
@@ -2736,6 +2750,7 @@ var DropgateClient = class {
           currentFileName: name
         });
         onFileStart?.({ name, size: fileMeta.sizeBytes, index: fi });
+        const baseReceivedBytes = totalReceivedBytes;
         const bytesReceived = await this._streamFileIntoCallback(
           baseUrl,
           fileMeta.fileId,
@@ -2744,7 +2759,20 @@ var DropgateClient = class {
           compat,
           signal,
           timeoutMs,
-          dataCallback ? (chunk) => dataCallback(chunk) : void 0
+          dataCallback ? (chunk) => dataCallback(chunk) : void 0,
+          (fileBytes) => {
+            const current = baseReceivedBytes + fileBytes;
+            progress({
+              phase: "downloading",
+              text: `Downloading ${name}...`,
+              percent: totalBytes > 0 ? current / totalBytes * 100 : 0,
+              processedBytes: current,
+              totalBytes,
+              fileIndex: fi,
+              totalFiles: bundleMeta.files.length,
+              currentFileName: name
+            });
+          }
         );
         onFileEnd?.({ name, index: fi });
         totalReceivedBytes += bytesReceived;
@@ -2827,6 +2855,15 @@ var DropgateClient = class {
         } else {
           await onData(chunk);
         }
+      },
+      (bytes) => {
+        progress({
+          phase: "downloading",
+          text: "Downloading...",
+          percent: totalBytes > 0 ? bytes / totalBytes * 100 : 0,
+          processedBytes: bytes,
+          totalBytes
+        });
       }
     );
     progress({ phase: "complete", text: "Download complete!", percent: 100, processedBytes: receivedBytes, totalBytes });
@@ -2851,7 +2888,7 @@ var DropgateClient = class {
    * Stream a single file's content into a callback, handling decryption if needed.
    * Returns total bytes received from the network (encrypted size).
    */
-  async _streamFileIntoCallback(baseUrl, fileId, isEncrypted, cryptoKey, compat, signal, timeoutMs, onChunk) {
+  async _streamFileIntoCallback(baseUrl, fileId, isEncrypted, cryptoKey, compat, signal, timeoutMs, onChunk, onBytesReceived) {
     const { signal: downloadSignal, cleanup: downloadCleanup } = makeAbortSignal(signal, timeoutMs);
     let receivedBytes = 0;
     try {
@@ -2892,6 +2929,7 @@ var DropgateClient = class {
           pendingChunks.push(value);
           pendingLength += value.length;
           receivedBytes += value.length;
+          if (onBytesReceived) onBytesReceived(receivedBytes);
           while (pendingLength >= ENCRYPTED_CHUNK_SIZE) {
             const buffer = flushPending();
             const encryptedChunk = buffer.subarray(0, ENCRYPTED_CHUNK_SIZE);
@@ -2914,6 +2952,7 @@ var DropgateClient = class {
           const { done, value } = await reader.read();
           if (done) break;
           receivedBytes += value.length;
+          if (onBytesReceived) onBytesReceived(receivedBytes);
           if (onChunk) await onChunk(value);
         }
       }

@@ -71,10 +71,13 @@ function buildFileList() {
   for (let i = 0; i < bundleState.filenames.length; i++) {
     const name = bundleState.filenames[i];
     const size = bundleState.files[i].sizeBytes;
-    const fileId = bundleState.files[i].fileId;
 
     const li = document.createElement('li');
-    li.className = 'list-group-item d-flex justify-content-between align-items-center py-2';
+    li.className = 'list-group-item py-2';
+    li.id = `file-item-${i}`;
+
+    const row = document.createElement('div');
+    row.className = 'd-flex justify-content-between align-items-center';
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'text-truncate me-2';
@@ -89,63 +92,137 @@ function buildFileList() {
     sizeSpan.textContent = formatBytes(size);
     rightSide.appendChild(sizeSpan);
 
-    // Individual download button (only for non-encrypted files in non-secure context,
-    // or any file where we can stream)
-    if (!bundleState.isEncrypted) {
-      const dlBtn = document.createElement('a');
-      dlBtn.href = `/api/file/${fileId}`;
-      dlBtn.className = 'btn btn-sm btn-outline-primary';
-      dlBtn.title = `Download ${name}`;
-      dlBtn.innerHTML = '<span class="material-icons-round" style="font-size: 1rem;">download</span>';
-      rightSide.appendChild(dlBtn);
-    } else if (window.isSecureContext && window.streamSaver?.createWriteStream) {
+    // Always use a button for individual downloads (routes through dropgate core)
+    const canStream = window.isSecureContext && window.streamSaver?.createWriteStream;
+    // For encrypted files, streaming is required
+    if (bundleState.isEncrypted && !canStream) {
+      // No download button — streaming not available
+    } else {
       const dlBtn = document.createElement('button');
-      dlBtn.className = 'btn btn-sm btn-outline-primary';
+      dlBtn.className = 'btn btn-sm btn-outline-primary d-inline-flex align-items-center justify-content-center';
       dlBtn.title = `Download ${name}`;
-      dlBtn.innerHTML = '<span class="material-icons-round" style="font-size: 1rem;">download</span>';
-      dlBtn.addEventListener('click', () => downloadSingleFile(i));
+      dlBtn.innerHTML = '<span class="material-icons-round" style="font-size: 1rem; line-height: 1;">download</span>';
+      dlBtn.addEventListener('click', () => downloadSingleFile(i, dlBtn));
       rightSide.appendChild(dlBtn);
     }
 
-    li.appendChild(nameSpan);
-    li.appendChild(rightSide);
+    row.appendChild(nameSpan);
+    row.appendChild(rightSide);
+    li.appendChild(row);
+
+    // Per-file progress bar (hidden by default)
+    const fileProgress = document.createElement('div');
+    fileProgress.className = 'mt-2';
+    fileProgress.id = `file-progress-${i}`;
+    fileProgress.style.display = 'none';
+    fileProgress.innerHTML = `
+      <div class="progress" style="height: 4px;">
+        <div class="progress-bar" id="file-progress-bar-${i}" style="width: 0%"></div>
+      </div>
+      <div class="text-body-secondary small mt-1" id="file-progress-text-${i}"></div>
+    `;
+    li.appendChild(fileProgress);
+
     fileListItems.appendChild(li);
   }
 }
 
-async function downloadSingleFile(index) {
+async function downloadSingleFile(index, dlBtn) {
   const name = bundleState.filenames[index];
   const fileId = bundleState.files[index].fileId;
+  const size = bundleState.files[index].sizeBytes;
 
-  if (!bundleState.isEncrypted) {
-    // Direct download for unencrypted files
-    window.location.href = `/api/file/${fileId}`;
+  const fileProgressEl = document.getElementById(`file-progress-${index}`);
+  const fileProgressBar = document.getElementById(`file-progress-bar-${index}`);
+  const fileProgressText = document.getElementById(`file-progress-text-${index}`);
+
+  // Disable button during download
+  if (dlBtn) dlBtn.disabled = true;
+
+  // Show per-file progress
+  if (fileProgressEl) fileProgressEl.style.display = 'block';
+  if (fileProgressBar) fileProgressBar.style.width = '0%';
+  if (fileProgressText) fileProgressText.textContent = 'Starting...';
+
+  // Check if we can use streaming (required for encrypted, preferred for plaintext)
+  const canStream = window.isSecureContext && window.streamSaver?.createWriteStream;
+
+  if (bundleState.isEncrypted && !canStream) {
+    if (fileProgressText) {
+      fileProgressText.textContent = 'Encrypted files require a secure context (HTTPS).';
+      fileProgressText.classList.add('text-danger');
+    }
+    if (dlBtn) dlBtn.disabled = false;
     return;
   }
 
-  // Encrypted single-file download via streamSaver
-  if (!window.isSecureContext || !window.streamSaver?.createWriteStream) {
-    alert('Encrypted files require a secure context (HTTPS) to download.');
-    return;
+  // For plaintext without streaming, check file existence first then fall back to direct download
+  if (!bundleState.isEncrypted && !canStream) {
+    try {
+      const metaRes = await fetch(`/api/file/${fileId}/meta`);
+      if (!metaRes.ok) {
+        if (fileProgressText) {
+          fileProgressText.textContent = metaRes.status === 404
+            ? 'File not found or has expired.'
+            : `Download failed (${metaRes.status}).`;
+          fileProgressText.classList.add('text-danger');
+        }
+        if (dlBtn) dlBtn.disabled = false;
+        return;
+      }
+      // File exists, use hidden iframe for download
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = `/api/file/${fileId}`;
+      document.body.appendChild(iframe);
+      if (fileProgressBar) fileProgressBar.style.width = '100%';
+      if (fileProgressText) fileProgressText.textContent = 'Download started. Check your browser downloads.';
+      if (dlBtn) dlBtn.disabled = false;
+      return;
+    } catch (error) {
+      console.error('File check failed:', error);
+      if (fileProgressText) {
+        fileProgressText.textContent = 'Could not reach the server. Please try again.';
+        fileProgressText.classList.add('text-danger');
+      }
+      if (dlBtn) dlBtn.disabled = false;
+      return;
+    }
   }
 
+  // Stream download via dropgate-core (both plaintext and encrypted)
   try {
-    const fileStream = streamSaver.createWriteStream(name);
+    const fileStream = streamSaver.createWriteStream(name, size ? { size } : undefined);
     const writer = fileStream.getWriter();
 
     await client.downloadFiles({
       fileId,
       keyB64: bundleState.keyB64,
       timeoutMs: 0,
+      onProgress: ({ percent, processedBytes, totalBytes }) => {
+        if (fileProgressBar) fileProgressBar.style.width = `${percent}%`;
+        if (fileProgressText) fileProgressText.textContent = `${formatBytes(processedBytes)} / ${formatBytes(totalBytes)}`;
+      },
       onData: async (chunk) => {
         await writer.write(chunk);
       },
     });
 
     await writer.close();
+    if (fileProgressBar) fileProgressBar.style.width = '100%';
+    if (fileProgressText) {
+      fileProgressText.textContent = 'Download complete!';
+      fileProgressText.classList.remove('text-danger');
+      fileProgressText.classList.add('text-success');
+    }
   } catch (error) {
     console.error('Single file download failed:', error);
-    alert(`Failed to download "${name}": ${error.message}`);
+    if (fileProgressText) {
+      fileProgressText.textContent = error.message || `Failed to download "${name}".`;
+      fileProgressText.classList.add('text-danger');
+    }
+  } finally {
+    if (dlBtn) dlBtn.disabled = false;
   }
 }
 
@@ -211,7 +288,7 @@ async function downloadAllAsZip() {
   }
 
   try {
-    const zipName = `dropgate-bundle-${bundleState.bundleId.substring(0, 8)}.zip`;
+    const zipName = `dropgate-bundle-${bundleState.bundleId}.zip`;
     statusTitle.textContent = bundleState.isEncrypted ? 'Downloading & Decrypting' : 'Downloading';
     statusMessage.textContent = `Your browser will ask you where to save "${zipName}".`;
 

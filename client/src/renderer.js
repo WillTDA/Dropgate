@@ -12,8 +12,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const fileInput = document.getElementById('file-input');
         const selectFileBtn = document.getElementById('select-file-btn');
         const fileChosen = document.getElementById('file-chosen');
-        const fileChosenName = document.getElementById('file-chosen-name');
-        const fileChosenSize = document.getElementById('file-chosen-size');
+        const fileChosenSummary = document.getElementById('file-chosen-summary');
+        const fileChosenList = document.getElementById('file-chosen-list');
+        const fileChosenTotal = document.getElementById('file-chosen-total');
         const maxUploadHint = document.getElementById('max-upload-hint');
         const serverUrlInput = document.getElementById('server-url');
         const testConnectionBtn = document.getElementById('test-connection-btn');
@@ -39,7 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const copyBtn = document.getElementById('copy-btn');
 
         let serverCapabilities = null;
-        let selectedFile = null;
+        let selectedFiles = [];
         /** @type {{compatible:boolean, message?:string}} */
         let lastServerCheck = { compatible: false, message: '' };
         let activeUploadSession = null;
@@ -150,7 +151,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         maxDownloadsValue.addEventListener('blur', () => updateMaxDownloadsSettings());
 
         selectFileBtn.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length) {
+                handleFiles(Array.from(e.target.files));
+                fileInput.value = '';
+            }
+        });
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -169,21 +175,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             const files = e.dataTransfer.files;
             if (!files || files.length === 0) return;
 
-            const droppedFile = files[0];
+            // Filter out directories
+            const validFiles = [];
+            for (const f of Array.from(files)) {
+                if (await isFile(f)) {
+                    validFiles.push(f);
+                }
+            }
 
-            // Check if the dropped item is a file
-            const isValidFile = await isFile(droppedFile);
-
-            if (isValidFile) {
-                handleFile(droppedFile);
-            } else {
+            if (validFiles.length === 0) {
                 uploadStatus.textContent = 'Folders cannot be uploaded.';
                 uploadStatus.className = 'form-text mt-1 text-warning';
-                selectedFile = null;
-                fileChosen.hidden = true;
-                fileInput.value = '';
-                uploadBtn.disabled = true;
+                return;
             }
+
+            handleFiles(validFiles);
         });
 
         testConnectionBtn.addEventListener('click', async () => {
@@ -280,7 +286,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.electronAPI.onFileOpened((file) => {
             if (file && file.data) {
                 const newFile = new File([file.data], file.name, { type: '' });
-                handleFile(newFile);
+                handleFiles([newFile]);
             }
         });
 
@@ -291,7 +297,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (details && details.data) {
                 console.log('File size:', details.data.byteLength, 'bytes');
                 const file = new File([details.data], details.name);
-                selectedFile = file;
+                selectedFiles = [file];
                 // Encryption is auto-determined by server capabilities later
 
                 const settings = await window.electronAPI.getSettings();
@@ -316,36 +322,77 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        function handleFile(file) {
+        function handleFiles(newFiles) {
             // Clear any previous error messages
             uploadStatus.textContent = '';
 
-            if (!file) {
-                selectedFile = null;
-                fileChosen.hidden = true;
-                fileInput.value = '';
-                uploadBtn.disabled = true;
+            if (!newFiles || newFiles.length === 0) {
                 return;
             }
 
-            if (file.size === 0) {
-                uploadStatus.textContent = 'Error: Cannot upload empty (0 byte) files.';
-                uploadStatus.className = 'form-text mt-1 text-danger';
-                selectedFile = null;
-                fileChosen.hidden = true;
-                fileInput.value = '';
-                uploadBtn.disabled = true;
-                return;
+            // Filter out empty files
+            const valid = newFiles.filter(f => f.size > 0);
+            const skipped = newFiles.length - valid.length;
+            if (skipped > 0) {
+                uploadStatus.textContent = `Skipped ${skipped} empty (0 byte) file${skipped > 1 ? 's' : ''}.`;
+                uploadStatus.className = 'form-text mt-1 text-warning';
             }
 
-            selectedFile = file;
-            fileChosenName.textContent = file.name;
-            fileChosenSize.textContent = formatBytes(file.size);
-            fileChosen.hidden = false;
+            if (valid.length === 0) return;
+
+            // Append to existing selection
+            selectedFiles = [...selectedFiles, ...valid];
+            updateFileListUI();
             linkSection.style.display = 'none';
 
             // Only enable upload if all conditions are met
             updateUploadButtonState();
+        }
+
+        function updateFileListUI() {
+            if (!selectedFiles.length) {
+                fileChosen.hidden = true;
+                return;
+            }
+
+            const count = selectedFiles.length;
+            fileChosenSummary.textContent = count === 1 ? '1 file selected' : `${count} files selected`;
+
+            fileChosenList.innerHTML = '';
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const f = selectedFiles[i];
+                const li = document.createElement('li');
+                li.className = 'd-flex align-items-center small mb-1';
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'text-truncate me-2';
+                nameSpan.textContent = f.name;
+                nameSpan.title = f.name;
+                const rightSide = document.createElement('span');
+                rightSide.className = 'd-flex align-items-center gap-1 flex-shrink-0 ms-auto';
+                const sizeSpan = document.createElement('span');
+                sizeSpan.className = 'text-body-secondary';
+                sizeSpan.textContent = formatBytes(f.size);
+                rightSide.appendChild(sizeSpan);
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'btn btn-sm p-0 border-0 text-body-secondary';
+                removeBtn.title = 'Remove file';
+                removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 16px; vertical-align: middle;">close</span>';
+                removeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectedFiles.splice(i, 1);
+                    updateFileListUI();
+                    updateUploadButtonState();
+                });
+                rightSide.appendChild(removeBtn);
+                li.appendChild(nameSpan);
+                li.appendChild(rightSide);
+                fileChosenList.appendChild(li);
+            }
+
+            const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+            fileChosenTotal.textContent = `Total: ${formatBytes(totalSize)}`;
+            fileChosen.hidden = false;
         }
 
         // Trigger for uploads started from the UI
@@ -367,8 +414,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (isNaN(value) || value <= 0) fileLifetimeValueInput.value = 0.5;
             }
 
-            if (!selectedFile) {
-                window.electronAPI.uploadFinished({ status: 'error', error: 'File is missing.' });
+            if (!selectedFiles.length) {
+                window.electronAPI.uploadFinished({ status: 'error', error: 'No files selected.' });
                 return;
             }
 
@@ -405,7 +452,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             try {
                 const session = await coreClient.uploadFiles({
-                    files: selectedFile,
+                    files: selectedFiles.length === 1 ? selectedFiles[0] : selectedFiles,
                     lifetimeMs,
                     maxDownloads: (() => {
                         const val = parseInt(maxDownloadsValue.value, 10);
@@ -727,7 +774,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isLifetimeValid = validateLifetimeInput();
             const isDownloadsValid = validateMaxDownloadsInput();
             const isServerCompatible = lastServerCheck.compatible;
-            const isFileSelected = !!selectedFile;
+            const isFileSelected = selectedFiles.length > 0;
 
             if (isFileSelected && isServerCompatible && isLifetimeValid && isDownloadsValid) {
                 uploadBtn.disabled = false;
@@ -802,12 +849,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // Update max file size hint
+            // Update max single file size hint
             const maxSizeBytes = serverCapabilities.upload.maxSizeMB * 1000 * 1000;
             if (maxSizeBytes === 0) {
                 maxUploadHint.textContent = 'You can upload files of any size.';
             } else {
-                maxUploadHint.textContent = `Max file size: ${formatBytes(maxSizeBytes)}.`;
+                maxUploadHint.textContent = `Max single file size: ${formatBytes(maxSizeBytes)}.`;
             }
 
             // Update Security Status UI (Auto-managed E2EE)
@@ -851,8 +898,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         function resetUI(clearFile = true) {
             uploadBtn.textContent = 'Upload';
             if (clearFile) {
-                selectedFile = null;
-                fileChosen.hidden = true;
+                selectedFiles = [];
+                updateFileListUI();
                 fileInput.value = '';
                 uploadBtn.disabled = true;
             } else {

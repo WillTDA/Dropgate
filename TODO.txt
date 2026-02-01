@@ -1,15 +1,5 @@
-- Upload drag and drop for UI should display a row for each file, with an X to remove it
-- Fix icon alignment issues in file list (bundles)
-- Fix zip name only using first part of UUID
-- Bring multi-file upload to the Electron client
-- Progress bar is not working for zip downloads
-
-FOR BOTH PLAINTEXT AND E2EE INDIVIDUAL FILE DOWNLOADS FROM BUNDLES:
-- SHOW A PROGRESS BAR FOR THE DOWNLOAD
-- DON'T USE URLS FOR PLAINTEXT DOWNLOADS (put everything into dropgate core whereever possible, fallback to normal download otherwise, check for file's existence and display error if not available)
-- HANDLE ERRORS GRACEFULLY AND PROVIDE UI FEEDBACK (not javascript alerts!)
-
-FOR P2P BUNDLE DOWNLOADS:
-- Keep it consistent by showing a collapsible file list (no individual downloads here though, too complicated for now)
-- Name the zip after the peer code (dropgate-bundle-XXXX-0000.zip)
-- Fix progress bar + text showing "0 / 0" on sender side.
+- Currently, bundle uploads are only limited by individual file size limits. By default, the Dropgate Server should limit total bundle size to UPLOAD_MAX_FILE_SIZE_MB. Add an environment variable to choose between these two behaviours.
+- Update UI text to clarify "max single file size" or "max upload size" where applicable, depending on the context. Apply to both client and server web UIs.
+- P2P bundle sending appears broken. Not all files show up, or the bundle ZIP cannot be extracted on the device once received.
+- Keep UI consistent with the web UI! Show file name for the upload status just like on the client.
+- Clean up the drag/drop tables a bit - Have nice, modern reactive round X buttons, and divide each file in the table with a line. Apply to both client and server web UIs.

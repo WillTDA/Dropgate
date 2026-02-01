@@ -9,11 +9,16 @@ const elBytes = document.getElementById('bytes');
 const elActions = document.getElementById('actions');
 const retryBtn = document.getElementById('retryBtn');
 const elFileDetails = document.getElementById('file-details');
+const elFileNameLabel = document.getElementById('file-name-label');
 const elFileName = document.getElementById('file-name');
 const elFileSize = document.getElementById('file-size');
 const elDownloadBtn = document.getElementById('download-button');
 const elCancelBtn = document.getElementById('cancel-button');
 const elProgressContainer = document.getElementById('progress-container');
+const elP2PFileListContainer = document.getElementById('p2p-file-list-container');
+const elP2PToggleFileList = document.getElementById('p2p-toggle-file-list');
+const elP2PFileList = document.getElementById('p2p-file-list');
+const elP2PFileListItems = document.getElementById('p2p-file-list-items');
 const card = document.getElementById('status-card');
 const iconContainer = document.getElementById('icon-container');
 
@@ -28,13 +33,42 @@ let writer = null;
 let pendingSendReady = null;
 let fileName = null;
 let p2pSession = null;
+let p2pFileListVisible = false;
+
+function buildP2PFileList(files) {
+  if (!elP2PFileListItems || !elP2PFileListContainer) return;
+  elP2PFileListItems.innerHTML = '';
+  for (const f of files) {
+    const li = document.createElement('li');
+    li.className = 'list-group-item d-flex justify-content-between align-items-center py-2';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'text-truncate me-2';
+    nameSpan.textContent = f.name;
+    nameSpan.title = f.name;
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'text-body-secondary small flex-shrink-0';
+    sizeSpan.textContent = formatBytes(f.size);
+    li.appendChild(nameSpan);
+    li.appendChild(sizeSpan);
+    elP2PFileListItems.appendChild(li);
+  }
+  elP2PFileListContainer.style.display = 'block';
+
+  elP2PToggleFileList?.addEventListener('click', () => {
+    p2pFileListVisible = !p2pFileListVisible;
+    elP2PFileList.style.display = p2pFileListVisible ? 'block' : 'none';
+    elP2PToggleFileList.innerHTML = p2pFileListVisible
+      ? '<span class="material-icons-round" style="font-size: 1rem; vertical-align: middle;">expand_less</span> Hide files'
+      : '<span class="material-icons-round" style="font-size: 1rem; vertical-align: middle;">expand_more</span> Show files';
+  });
+}
 
 // Title progress tracking
 const originalTitle = document.title;
 let currentTransferProgress = null; // { percent, received, total }
 
 const updateTitleProgress = (percent) => {
-  if (percent >= 0 && percent < 100) {
+  if (percent > 1 && percent < 100) {
     document.title = `${Math.floor(percent)}% - ${originalTitle}`;
   } else {
     document.title = originalTitle;
@@ -183,10 +217,10 @@ async function start() {
         elTitle.textContent = 'Connected';
         elMsg.textContent = 'Waiting for file details...';
       },
-      onMeta: ({ name, total: nextTotal, sendReady, fileCount, totalSize }) => {
+      onMeta: ({ name, total: nextTotal, sendReady, fileCount, files, totalSize }) => {
         total = totalSize || nextTotal;
         received = 0;
-        fileName = fileCount > 1 ? `${fileCount}-files.zip` : name;
+        fileName = fileCount > 1 ? `dropgate-bundle-${code}.zip` : name;
 
         // Store the sendReady function to call when user clicks download
         pendingSendReady = sendReady;
@@ -195,10 +229,16 @@ async function start() {
         elTitle.textContent = 'Ready to Transfer';
         elMsg.textContent = 'Review the file details below, then click Start Transfer.';
 
-        elFileName.textContent = fileCount > 1 ? `${fileCount} files (first: ${name})` : name;
+        elFileName.textContent = fileCount > 1 ? fileCount : name;
+        elFileNameLabel.textContent = fileCount > 1 ? 'Files' : 'File name';
         elFileSize.textContent = formatBytes(total);
         elFileDetails.style.display = 'block';
         elDownloadBtn.style.display = 'inline-block';
+
+        // Build collapsible file list for multi-file transfers
+        if (fileCount > 1 && files && files.length) {
+          buildP2PFileList(files);
+        }
 
         // Clear border for neutral preview state
         clearStatusBorder(card);

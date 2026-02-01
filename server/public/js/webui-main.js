@@ -104,7 +104,7 @@ const originalTitle = document.title;
 let currentTransferProgress = null; // { percent, doneBytes, totalBytes }
 
 const updateTitleProgress = (percent) => {
-  if (percent >= 0 && percent < 100) {
+  if (percent > 1 && percent < 100) {
     document.title = `${Math.floor(percent)}% - ${originalTitle}`;
   } else {
     document.title = originalTitle;
@@ -217,18 +217,35 @@ function updateFileUI() {
   els.fileChosenSummary.textContent = count === 1 ? '1 file selected' : `${count} files selected`;
 
   els.fileChosenList.innerHTML = '';
-  for (const f of state.files) {
+  for (let i = 0; i < state.files.length; i++) {
+    const f = state.files[i];
     const li = document.createElement('li');
-    li.className = 'd-flex justify-content-between small';
+    li.className = 'd-flex align-items-center small mb-1';
     const nameSpan = document.createElement('span');
     nameSpan.className = 'text-truncate me-2';
     nameSpan.textContent = f.name;
     nameSpan.title = f.name;
+    const rightSide = document.createElement('span');
+    rightSide.className = 'd-flex align-items-center gap-1 flex-shrink-0 ms-auto';
     const sizeSpan = document.createElement('span');
-    sizeSpan.className = 'text-body-secondary flex-shrink-0';
+    sizeSpan.className = 'text-body-secondary';
     sizeSpan.textContent = formatBytes(f.size);
+    rightSide.appendChild(sizeSpan);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-sm p-0 border-0 text-body-secondary';
+    removeBtn.title = 'Remove file';
+    removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 16px; vertical-align: middle;">close</span>';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.files.splice(i, 1);
+      updateFileUI();
+      state.fileTooLargeForStandard = Boolean(state.files.length && areFilesTooLargeForStandard(state.files));
+      updateStartEnabled();
+    });
+    rightSide.appendChild(removeBtn);
     li.appendChild(nameSpan);
-    li.appendChild(sizeSpan);
+    li.appendChild(rightSide);
     els.fileChosenList.appendChild(li);
   }
 
@@ -405,7 +422,7 @@ function updateCapabilitiesUI() {
   if (state.uploadEnabled) {
     const maxText = (state.maxSizeMB === 0)
       ? 'You can upload files of any size.'
-      : `Max file size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
+      : `Max single file size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
     els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
@@ -878,6 +895,7 @@ async function startP2PSendFlow() {
   }
 
   const file = state.files.length === 1 ? state.files[0] : state.files;
+  const p2pTotalSize = state.files.reduce((sum, f) => sum + f.size, 0);
 
   // Load PeerJS before starting P2P
   let Peer;
@@ -924,13 +942,13 @@ async function startP2PSendFlow() {
         setHidden(els.qrP2PLink, true);
       } else if (phase === 'transferring') {
         // Switch to progress card when transfer actually starts
-        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'sync_alt', iconColor: 'text-primary' });
         // Show P2P cancel button
         els.cancelP2PSend.style.display = 'inline-block';
         els.cancelStandardUpload.style.display = 'none';
       } else {
         // Default behaviour for other statuses
-        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'sync_alt', iconColor: 'text-primary' });
       }
     },
     onProgress: ({ processedBytes, totalBytes, percent }) => {
@@ -961,13 +979,13 @@ async function startP2PSendFlow() {
       console.error(err);
       resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
-      showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
+      showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'error', iconColor: 'text-danger' });
       stopP2P();
     },
     onDisconnect: () => {
       resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
-      showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'link_off', iconColor: 'text-warning' });
+      showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'link_off', iconColor: 'text-warning' });
       stopP2P();
     },
     onCancel: (evt) => {
