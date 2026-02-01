@@ -8,6 +8,7 @@ import {
   P2P_END_ACK_RETRY_DELAY_MS,
   isP2PMessage,
   type P2PChunkMessage,
+  type P2PFileListMessage,
 } from './protocol.js';
 
 /**
@@ -135,6 +136,11 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   let activeConn: DataConnection | null = null;
 
   let pendingChunk: P2PChunkMessage | null = null;
+
+  // Multi-file tracking (v3)
+  let fileList: P2PFileListMessage | null = null;
+  let currentFileReceived = 0;
+  let totalReceivedAllFiles = 0;
 
   /**
    * Attempt a state transition. Returns true if transition was valid.
@@ -310,8 +316,11 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               }
 
               received += buf.byteLength;
-              const percent = total ? Math.min(100, (received / total) * 100) : 0;
-              onProgress?.({ processedBytes: received, totalBytes: total, percent });
+              currentFileReceived += buf.byteLength;
+              const progressReceived = fileList ? (totalReceivedAllFiles + currentFileReceived) : received;
+              const progressTotal = fileList ? fileList.totalSize : total;
+              const percent = progressTotal ? Math.min(100, (progressReceived / progressTotal) * 100) : 0;
+              onProgress?.({ processedBytes: progressReceived, totalBytes: progressTotal, percent });
 
               // Send chunk acknowledgment
               if (chunkSeq >= 0) {
@@ -345,8 +354,15 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             onStatus?.({ phase: 'waiting', message: 'Waiting for file details...' });
             break;
 
+          case 'file_list':
+            // v3: Store file list for multi-file transfer
+            fileList = msg as P2PFileListMessage;
+            total = fileList.totalSize;
+            break;
+
           case 'meta': {
-            if (state !== 'negotiating') {
+            // For multi-file: meta comes for each file (first triggers ready, subsequent auto-transition)
+            if (state !== 'negotiating' && !(state === 'transferring' && fileList)) {
               return;
             }
 
@@ -366,8 +382,23 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             }
 
             const name = String(msg.name || 'file');
-            total = Number(msg.size) || 0;
+            const fileSize = Number(msg.size) || 0;
+            const fi = msg.fileIndex;
+
+            // For multi-file subsequent files, reset per-file tracking
+            if (fileList && typeof fi === 'number' && fi > 0) {
+              currentFileReceived = 0;
+              // Don't reset writeQueue or received - they accumulate
+              break; // Already transferring, no need for ready signal
+            }
+
+            // First file (or single file transfer)
             received = 0;
+            currentFileReceived = 0;
+            totalReceivedAllFiles = 0;
+            if (!fileList) {
+              total = fileSize;
+            }
             writeQueue = Promise.resolve();
 
             // Function to send ready signal
@@ -382,13 +413,22 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               }
             };
 
+            // Build metadata event
+            const metaEvt: Parameters<NonNullable<typeof onMeta>>[0] = { name, total };
+            if (fileList) {
+              metaEvt.fileCount = fileList.fileCount;
+              metaEvt.files = fileList.files.map(f => ({ name: f.name, size: f.size }));
+              metaEvt.totalSize = fileList.totalSize;
+            }
+
             if (autoReady) {
-              onMeta?.({ name, total });
+              onMeta?.(metaEvt);
               onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
               sendReady();
             } else {
               // Pass sendReady function to callback so consumer can trigger transfer start
-              onMeta?.({ name, total, sendReady });
+              metaEvt.sendReady = sendReady;
+              onMeta?.(metaEvt);
               onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
             }
             break;
@@ -407,13 +447,37 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             }
             break;
 
+          case 'file_end': {
+            // v3: Current file complete, ack it
+            clearWatchdog();
+            await writeQueue;
+
+            const feIdx = msg.fileIndex;
+            try {
+              conn.send({ t: 'file_end_ack', fileIndex: feIdx, received: currentFileReceived, size: currentFileReceived });
+            } catch {
+              // Ignore send errors
+            }
+
+            totalReceivedAllFiles += currentFileReceived;
+            currentFileReceived = 0;
+
+            // Restart watchdog for next file
+            resetWatchdog();
+            break;
+          }
+
           case 'end':
             clearWatchdog();
             await writeQueue;
 
-            if (total && received < total) {
+            // For multi-file, use totalReceivedAllFiles + any remaining
+            const finalReceived = fileList ? (totalReceivedAllFiles + currentFileReceived) : received;
+            const finalTotal = fileList ? fileList.totalSize : total;
+
+            if (finalTotal && finalReceived < finalTotal) {
               const err = new DropgateNetworkError(
-                'Transfer ended before the full file was received.'
+                'Transfer ended before all data was received.'
               );
               try {
                 conn.send({ t: 'error', message: err.message });
@@ -425,20 +489,20 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
             // Send end_ack immediately so sender can complete
             try {
-              conn.send({ t: 'end_ack', received, total });
+              conn.send({ t: 'end_ack', received: finalReceived, total: finalTotal });
             } catch {
               // Ignore send errors
             }
 
             // Mark as completed - protects against close handler race
-            safeComplete({ received, total });
+            safeComplete({ received: finalReceived, total: finalTotal });
 
             // Send additional acks for reliability (fire-and-forget, best effort)
             (async () => {
               for (let i = 0; i < 2; i++) {
                 await sleep(P2P_END_ACK_RETRY_DELAY_MS);
                 try {
-                  conn.send({ t: 'end_ack', received, total });
+                  conn.send({ t: 'end_ack', received: finalReceived, total: finalTotal });
                 } catch {
                   break; // Connection closed
                 }

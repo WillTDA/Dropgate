@@ -18,7 +18,7 @@
   <main>
     <div class="container-main">
       <%- include('../partials/header') %>
-        <p id="tagline" class="lead text-center mb-4">Send a file securely, or enter a sharing code to receive one.</p>
+        <p id="tagline" class="lead text-center mb-4">Send files securely, or enter a sharing code to receive.</p>
 
         <div id="statusAlert" class="alert mt-3" role="status" hidden></div>
 
@@ -27,16 +27,16 @@
           <div class="col-lg-6">
             <div class="card shadow-sm h-100">
               <div class="card-body p-4">
-                <div id="dropzone" class="dropzone text-center" tabindex="0" role="button" aria-label="Select a file">
-                  <h5 class="mb-2">Drag &amp; Drop File Here</h5>
+                <div id="dropzone" class="dropzone text-center" tabindex="0" role="button" aria-label="Select files">
+                  <h5 class="mb-2">Drag &amp; Drop Files Here</h5>
                   <div class="text-body-secondary mb-3">or</div>
-                  <button class="btn btn-secondary" id="selectFileBtn" type="button">Select File</button>
-                  <input id="fileInput" class="visually-hidden" type="file" />
+                  <button class="btn btn-secondary" id="selectFileBtn" type="button">Select Files</button>
+                  <input id="fileInput" class="visually-hidden" type="file" multiple />
 
                   <div id="fileChosen" class="mt-3 small text-body-secondary" hidden>
-                    <span class="fw-semibold" id="fileChosenName">file</span>
-                    <span class="mx-1">•</span>
-                    <span id="fileChosenSize">0 MB</span>
+                    <div id="fileChosenSummary" class="fw-semibold mb-1"></div>
+                    <ul id="fileChosenList" class="list-unstyled mb-0 text-start mx-auto" style="max-width: 320px;"></ul>
+                    <div class="mt-1 text-body-secondary" id="fileChosenTotal"></div>
                   </div>
 
                   <div class="mt-4 small text-body-secondary" id="maxUploadHint">Loading server limits...</div>
@@ -51,7 +51,7 @@
               <div class="card-body p-4">
                 <div class="text-center">
                   <h2 class="h4 fw-semibold mb-1">Options</h2>
-                  <div class="text-body-secondary">Choose how to upload your file.</div>
+                  <div class="text-body-secondary">Choose how to upload your files.</div>
                 </div>
 
                 <hr class="my-4" />
@@ -169,7 +169,7 @@
               </button>
             </div>
 
-            <button class="btn btn-secondary mt-3" id="newUpload" type="button">Send another file</button>
+            <button class="btn btn-secondary mt-3" id="newUpload" type="button">Send more files</button>
           </div>
         </div>
 

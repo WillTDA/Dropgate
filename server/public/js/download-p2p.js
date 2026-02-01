@@ -183,10 +183,10 @@ async function start() {
         elTitle.textContent = 'Connected';
         elMsg.textContent = 'Waiting for file details...';
       },
-      onMeta: ({ name, total: nextTotal, sendReady }) => {
-        total = nextTotal;
+      onMeta: ({ name, total: nextTotal, sendReady, fileCount, totalSize }) => {
+        total = totalSize || nextTotal;
         received = 0;
-        fileName = name;
+        fileName = fileCount > 1 ? `${fileCount}-files.zip` : name;
 
         // Store the sendReady function to call when user clicks download
         pendingSendReady = sendReady;
@@ -195,7 +195,7 @@ async function start() {
         elTitle.textContent = 'Ready to Transfer';
         elMsg.textContent = 'Review the file details below, then click Start Transfer.';
 
-        elFileName.textContent = name;
+        elFileName.textContent = fileCount > 1 ? `${fileCount} files (first: ${name})` : name;
         elFileSize.textContent = formatBytes(total);
         elFileDetails.style.display = 'block';
         elDownloadBtn.style.display = 'inline-block';

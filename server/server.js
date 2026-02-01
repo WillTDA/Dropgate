@@ -1,5 +1,5 @@
 process.env.ENABLE_UPLOAD = process.env.ENABLE_UPLOAD || 'true';
-process.env.UPLOAD_ENABLE_E2EE = false;
+process.env.UPLOAD_ENABLE_E2EE = true;
 process.env.UPLOAD_MAX_FILE_SIZE_MB = 100000;
 process.env.UPLOAD_CHUNK_SIZE_BYTES = 1048576;
 
@@ -182,7 +182,9 @@ let maxFileDownloads = 1;
 let uploadChunkSizeBytes = 5 * 1024 * 1024;
 let currentDiskUsage = 0;
 let fileDatabase = null;
+let bundleDatabase = null;
 let ongoingUploads = null;
+let ongoingBundles = null;
 
 if (enableUpload) {
     preserveUploads = process.env.UPLOAD_PRESERVE_UPLOADS === 'true';
@@ -243,7 +245,9 @@ if (enableUpload) {
     }
 
     fileDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'file-database.json')) : new Map();
+    bundleDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'bundle-database.json')) : new Map();
     ongoingUploads = new Map();
+    ongoingBundles = new Map();
     log('info', `File database is ready. (${preserveUploads ? 'persistent' : 'in-memory'})`);
 } else {
     log('info', 'Upload protocol disabled. Cleaning up upload directory...');
@@ -472,6 +476,134 @@ if (enableUpload) {
         res.status(200).json({ uploadId });
     });
 
+    uploadRouter.post('/init-bundle', limiter, (req, res) => {
+        const bundleUploadId = uuidv4();
+        const { fileCount, files, lifetime, isEncrypted, maxDownloads: clientMaxDownloads } = req.body;
+
+        if (isEncrypted && !uploadEnableE2EE) {
+            return res.status(400).json({ error: 'End-to-end encryption is not supported on this server.' });
+        }
+
+        if (typeof isEncrypted !== 'boolean') {
+            return res.status(400).json({ error: 'Invalid isEncrypted. Must be a boolean.' });
+        }
+
+        if (typeof fileCount !== 'number' || !Number.isInteger(fileCount) || fileCount < 2) {
+            return res.status(400).json({ error: 'Invalid fileCount. Must be an integer >= 2.' });
+        }
+
+        if (!Array.isArray(files) || files.length !== fileCount) {
+            return res.status(400).json({ error: 'Files array must match fileCount.' });
+        }
+
+        if (typeof lifetime !== 'number' || !Number.isInteger(lifetime) || lifetime < 0) {
+            return res.status(400).json({ error: 'Invalid lifetime. Must be a non-negative integer (milliseconds).' });
+        }
+
+        if (MAX_FILE_LIFETIME_MS !== Infinity) {
+            if (lifetime === 0) {
+                return res.status(400).json({ error: `Server does not allow unlimited file lifetime. Max: ${maxFileLifetimeHours} hours.` });
+            }
+            if (lifetime > MAX_FILE_LIFETIME_MS) {
+                return res.status(400).json({ error: `File lifetime exceeds limit of ${maxFileLifetimeHours} hours.` });
+            }
+        }
+
+        // Validate maxDownloads (same logic as single-file init)
+        let effectiveMaxDownloads = maxFileDownloads;
+        if (clientMaxDownloads !== undefined) {
+            if (typeof clientMaxDownloads !== 'number' || !Number.isInteger(clientMaxDownloads) || clientMaxDownloads < 0) {
+                return res.status(400).json({ error: 'Invalid maxDownloads. Must be a non-negative integer.' });
+            }
+            if (maxFileDownloads === 1) {
+                effectiveMaxDownloads = 1;
+            } else if (maxFileDownloads === 0) {
+                effectiveMaxDownloads = clientMaxDownloads;
+            } else {
+                if (clientMaxDownloads === 0) {
+                    return res.status(400).json({ error: `Server does not allow unlimited downloads. Max: ${maxFileDownloads}.` });
+                }
+                if (clientMaxDownloads > maxFileDownloads) {
+                    return res.status(400).json({ error: `Max downloads exceeds server limit of ${maxFileDownloads}.` });
+                }
+                effectiveMaxDownloads = clientMaxDownloads;
+            }
+        }
+
+        // Validate each file entry and compute totals
+        let totalBundleSize = 0;
+        const fileUploadIds = [];
+        const fileEntries = [];
+
+        for (let i = 0; i < files.length; i++) {
+            const f = files[i];
+            if (typeof f.filename !== 'string' || f.filename.trim().length === 0) {
+                return res.status(400).json({ error: `Invalid filename for file at index ${i}.` });
+            }
+            const size = parseInt(f.totalSize);
+            const chunks = parseInt(f.totalChunks);
+            if (!Number.isInteger(size) || size <= 0) {
+                return res.status(400).json({ error: `Invalid totalSize for file at index ${i}.` });
+            }
+            if (!Number.isInteger(chunks) || chunks <= 0) {
+                return res.status(400).json({ error: `Invalid totalChunks for file at index ${i}.` });
+            }
+            if (size > MAX_FILE_SIZE_BYTES) {
+                return res.status(413).json({ error: `File at index ${i} exceeds limit of ${maxFileSizeMB} MB.` });
+            }
+            if (!isEncrypted) {
+                if (f.filename.length > 255 || /[\/\\]/.test(f.filename)) {
+                    return res.status(400).json({ error: `Invalid filename at index ${i}. Contains illegal characters or is too long.` });
+                }
+            }
+            totalBundleSize += size;
+            const uploadId = uuidv4();
+            fileUploadIds.push(uploadId);
+            fileEntries.push({ uploadId, filename: f.filename, totalSize: size, totalChunks: chunks });
+        }
+
+        // Check storage quota for the entire bundle
+        let reservedSpace = 0;
+        ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
+        if ((currentDiskUsage + reservedSpace + totalBundleSize) > MAX_STORAGE_BYTES) {
+            return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
+        }
+
+        // Create individual upload sessions for each file
+        for (const entry of fileEntries) {
+            const tempFilePath = path.join(tmpDir, entry.uploadId);
+            fs.writeFileSync(tempFilePath, '');
+            ongoingUploads.set(entry.uploadId, {
+                filename: entry.filename,
+                isEncrypted,
+                lifetime: Number(lifetime) || 0,
+                maxDownloads: effectiveMaxDownloads,
+                tempFilePath,
+                totalSize: entry.totalSize,
+                totalChunks: entry.totalChunks,
+                receivedChunks: new Set(),
+                reservedBytes: entry.totalSize,
+                expiresAt: Date.now() + (2 * 60 * 1000),
+                bundleUploadId, // Link back to the bundle
+            });
+        }
+
+        // Track the bundle session
+        ongoingBundles.set(bundleUploadId, {
+            fileUploadIds,
+            fileCount,
+            isEncrypted,
+            lifetime: Number(lifetime) || 0,
+            maxDownloads: effectiveMaxDownloads,
+            completedFiles: new Set(),
+            completedFileResults: [], // { fileId, name, sizeBytes }
+            expiresAt: Date.now() + (10 * 60 * 1000), // 10 minute deadline for entire bundle
+        });
+
+        log('debug', `Initialised bundle upload (${fileCount} files). Reserved ${(totalBundleSize / 1000 / 1000).toFixed(2)} MB total.`);
+        res.status(200).json({ bundleUploadId, fileUploadIds });
+    });
+
     uploadRouter.post('/cancel', uploadAuth, (req, res) => {
         const { uploadId } = req.body;
         if (!ongoingUploads.has(uploadId)) {
@@ -596,18 +728,87 @@ if (enableUpload) {
 
         const expiresAt = uploadInfo.lifetime > 0 ? Date.now() + uploadInfo.lifetime : null;
 
-        fileDatabase.set(fileId, {
+        const fileRecord = {
             name: uploadInfo.filename,
             path: finalPath,
             expiresAt: expiresAt,
             isEncrypted: uploadInfo.isEncrypted,
             maxDownloads: uploadInfo.maxDownloads,
             downloadCount: 0,
-        });
+        };
+
+        // If this file belongs to a bundle, tag it and track completion
+        if (uploadInfo.bundleUploadId) {
+            fileRecord.bundleId = 'pending'; // Will be set to actual bundleId on complete-bundle
+            const bundleSession = ongoingBundles.get(uploadInfo.bundleUploadId);
+            if (bundleSession) {
+                bundleSession.completedFiles.add(uploadId);
+                bundleSession.completedFileResults.push({
+                    fileId,
+                    uploadId,
+                    name: uploadInfo.filename,
+                    sizeBytes: stats.size,
+                });
+                bundleSession.expiresAt = Date.now() + (10 * 60 * 1000); // Reset bundle deadline
+            }
+        }
+
+        fileDatabase.set(fileId, fileRecord);
 
         ongoingUploads.delete(uploadId); // Remove the reservation
         log('debug', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
         res.status(200).json({ id: fileId });
+    });
+
+    uploadRouter.post('/complete-bundle', limiter, (req, res) => {
+        const { bundleUploadId } = req.body;
+        if (!bundleUploadId || !ongoingBundles.has(bundleUploadId)) {
+            return res.status(400).json({ error: 'Invalid bundle upload ID.' });
+        }
+
+        const bundleSession = ongoingBundles.get(bundleUploadId);
+
+        // Verify all files are completed
+        if (bundleSession.completedFiles.size !== bundleSession.fileCount) {
+            return res.status(400).json({
+                error: `Bundle incomplete. ${bundleSession.completedFiles.size} of ${bundleSession.fileCount} files completed.`
+            });
+        }
+
+        const bundleId = uuidv4();
+
+        // Calculate total size and build file list
+        let totalSizeBytes = 0;
+        const bundleFiles = [];
+        for (const result of bundleSession.completedFileResults) {
+            totalSizeBytes += result.sizeBytes;
+            bundleFiles.push({
+                fileId: result.fileId,
+                name: result.name,
+                sizeBytes: result.sizeBytes,
+            });
+
+            // Update the file record with the actual bundleId
+            const fileRecord = fileDatabase.get(result.fileId);
+            if (fileRecord) {
+                fileDatabase.set(result.fileId, { ...fileRecord, bundleId });
+            }
+        }
+
+        const expiresAt = bundleSession.lifetime > 0 ? Date.now() + bundleSession.lifetime : null;
+
+        bundleDatabase.set(bundleId, {
+            files: bundleFiles,
+            isEncrypted: bundleSession.isEncrypted,
+            expiresAt,
+            maxDownloads: bundleSession.maxDownloads,
+            downloadCount: 0,
+            totalSizeBytes,
+        });
+
+        ongoingBundles.delete(bundleUploadId);
+        log('debug', `Bundle created (${bundleFiles.length} files, ${(totalSizeBytes / 1000 / 1000).toFixed(2)} MB total).`);
+        res.status(200).json({ bundleId });
     });
 
     apiRouter.get('/file/:fileId/meta', limiter, (req, res) => {
@@ -668,6 +869,13 @@ if (enableUpload) {
         readStream.pipe(res);
 
         readStream.on('close', () => {
+            // Skip download counting for files that belong to a bundle
+            // (bundle download count is tracked separately via /api/bundle/:bundleId/downloaded)
+            if (fileInfo.bundleId) {
+                log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] Bundle file data sent (individual download, no count increment).`);
+                return;
+            }
+
             // Increment download count
             const newDownloadCount = (fileInfo.downloadCount || 0) + 1;
             const maxDl = fileInfo.maxDownloads ?? 1;
@@ -689,6 +897,72 @@ if (enableUpload) {
                 log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent (${newDownloadCount}/${maxDl === 0 ? 'unlimited' : maxDl} downloads).`);
             }
         });
+    });
+
+    // ===== Bundle API Endpoints =====
+
+    apiRouter.get('/bundle/:bundleId/meta', limiter, (req, res) => {
+        const bundleId = req.params.bundleId;
+        const bundleInfo = bundleDatabase.get(bundleId);
+
+        if (!bundleInfo) {
+            return res.status(404).json({ error: 'Bundle not found.' });
+        }
+
+        if (bundleInfo.isEncrypted && !uploadEnableE2EE) {
+            return res.status(404).json({ error: 'Bundle not found.' });
+        }
+
+        const payload = {
+            isEncrypted: bundleInfo.isEncrypted,
+            totalSizeBytes: bundleInfo.totalSizeBytes,
+            fileCount: bundleInfo.files.length,
+            files: bundleInfo.files.map(f => {
+                const entry = { fileId: f.fileId, sizeBytes: f.sizeBytes };
+                if (bundleInfo.isEncrypted) {
+                    entry.encryptedFilename = f.name;
+                } else {
+                    entry.filename = f.name;
+                }
+                return entry;
+            }),
+        };
+
+        res.status(200).json(payload);
+    });
+
+    apiRouter.post('/bundle/:bundleId/downloaded', limiter, (req, res) => {
+        const bundleId = req.params.bundleId;
+        const bundleInfo = bundleDatabase.get(bundleId);
+
+        if (!bundleInfo) {
+            return res.status(404).json({ error: 'Bundle not found.' });
+        }
+
+        const newDownloadCount = (bundleInfo.downloadCount || 0) + 1;
+        const maxDl = bundleInfo.maxDownloads ?? 1;
+
+        if (maxDl > 0 && newDownloadCount >= maxDl) {
+            // Delete all bundle files and the bundle record
+            for (const f of bundleInfo.files) {
+                const fileInfo = fileDatabase.get(f.fileId);
+                if (fileInfo) {
+                    try {
+                        const stats = fs.statSync(fileInfo.path);
+                        currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+                    } catch (e) { }
+                    fs.rm(fileInfo.path, { force: true }, () => { });
+                    fileDatabase.delete(f.fileId);
+                }
+            }
+            bundleDatabase.delete(bundleId);
+            log('debug', `Bundle downloaded and deleted (${newDownloadCount}/${maxDl} downloads).`);
+        } else {
+            bundleDatabase.set(bundleId, { ...bundleInfo, downloadCount: newDownloadCount });
+            log('debug', `Bundle downloaded (${newDownloadCount}/${maxDl === 0 ? 'unlimited' : maxDl} downloads).`);
+        }
+
+        res.status(200).json({ downloadCount: newDownloadCount, maxDownloads: maxDl });
     });
 }
 
@@ -754,14 +1028,25 @@ apiRouter.post('/resolve', limiter, (req, res) => {
                 return res.status(200).json({ valid: true, type: 'p2p', target: `/p2p/${encodeURIComponent(code)}` });
             }
 
+            if (path.startsWith('/b/')) {
+                const bundleId = path.slice(3);
+                if (isUuid(bundleId) && enableUpload && bundleDatabase && bundleDatabase.get(bundleId)) {
+                    return res.status(200).json({ valid: true, type: 'bundle', target: `/b/${bundleId}` });
+                }
+            }
+
             if (path.startsWith('/')) {
-                const fileId = path.slice(1);
-                if (isUuid(fileId)) {
-                    const fileInfo = fileDatabase.get(fileId);
+                const id = path.slice(1);
+                if (isUuid(id)) {
+                    // Check bundles first, then files
+                    if (enableUpload && bundleDatabase && bundleDatabase.get(id)) {
+                        return res.status(200).json({ valid: true, type: 'bundle', target: `/b/${id}` });
+                    }
+                    const fileInfo = fileDatabase.get(id);
                     if (!fileInfo) {
                         return res.status(200).json({ valid: false, reason: 'File not found.' });
                     }
-                    return res.status(200).json({ valid: true, type: 'file', target: `/${fileId}` });
+                    return res.status(200).json({ valid: true, type: 'file', target: `/${id}` });
                 }
             }
 
@@ -773,7 +1058,11 @@ apiRouter.post('/resolve', limiter, (req, res) => {
 
     const compact = raw.replace(/\s+/g, '');
     if (isUuid(compact)) {
-        const fileInfo = fileDatabase.get(compact);
+        // Check bundles first, then files
+        if (enableUpload && bundleDatabase && bundleDatabase.get(compact)) {
+            return res.status(200).json({ valid: true, type: 'bundle', target: `/b/${compact}` });
+        }
+        const fileInfo = enableUpload && fileDatabase ? fileDatabase.get(compact) : null;
         if (!fileInfo) {
             return res.status(200).json({ valid: false, reason: 'File not found.' });
         }
@@ -817,12 +1106,42 @@ app.get('/', limiter, (req, res) => {
     return res.status(200).render('pages/index', { serverName });
 });
 
-// Standard download page
+// Download pages
 if (enableUpload) {
     app.use('/upload', uploadRouter);
 
+    // Bundle download page
+    app.get('/b/:bundleId', limiter, (req, res) => {
+        const bundleId = req.params.bundleId;
+        const bundleInfo = bundleDatabase.get(bundleId);
+
+        if (!bundleInfo) return res.status(404).render('pages/404', { serverName });
+
+        if (bundleInfo.isEncrypted) {
+            if (!uploadEnableE2EE) {
+                log('debug', 'Blocked access to an encrypted bundle because upload E2EE is disabled.');
+                return res.status(404).render('pages/404', { serverName });
+            }
+
+            if (req.protocol !== 'https') {
+                log('debug', 'Blocked access to an encrypted bundle over an insecure connection (HTTP).');
+                return res.status(400).render('pages/insecure', { serverName });
+            }
+        }
+
+        return res.status(200).render('pages/download-bundle', { serverName, bundleId });
+    });
+
+    // Standard single-file download page
     app.get(`/:fileId`, limiter, (req, res) => {
         const fileId = req.params.fileId;
+
+        // Check if this ID is actually a bundle
+        const bundleInfo = bundleDatabase.get(fileId);
+        if (bundleInfo) {
+            return res.redirect(301, `/b/${fileId}`);
+        }
+
         const fileInfo = fileDatabase.get(fileId);
 
         if (!fileInfo) return res.status(404).render('pages/404', { serverName });
@@ -833,7 +1152,6 @@ if (enableUpload) {
                 return res.status(404).render('pages/404', { serverName });
             }
 
-            // The Web Crypto API requires a secure context (HTTPS).
             if (req.protocol !== 'https') {
                 log('debug', 'Blocked access to an encrypted file over an insecure connection (HTTP).');
                 return res.status(400).render('pages/insecure', { serverName });
@@ -853,6 +1171,8 @@ if (enableUpload) {
         const allFiles = preserveUploads ? fileDatabase.getAll() : Array.from(fileDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
         for (const record of allFiles) {
             if (record.value?.expiresAt && record.value.expiresAt < now) {
+                // Skip files that belong to a bundle (they are cleaned up with the bundle)
+                if (record.value.bundleId) continue;
                 log('debug', 'File expired. Deleting...');
                 try {
                     const stats = fs.statSync(record.value.path);
@@ -860,6 +1180,26 @@ if (enableUpload) {
                     fs.rmSync(record.value.path, { force: true });
                 } catch (e) { }
                 fileDatabase.delete(record.key);
+            }
+        }
+
+        // Clean up expired bundles and their member files
+        const allBundles = preserveUploads ? bundleDatabase.getAll() : Array.from(bundleDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
+        for (const record of allBundles) {
+            if (record.value?.expiresAt && record.value.expiresAt < now) {
+                log('debug', `Bundle expired. Deleting ${record.value.files?.length || 0} member files...`);
+                for (const f of (record.value.files || [])) {
+                    const fileInfo = fileDatabase.get(f.fileId);
+                    if (fileInfo) {
+                        try {
+                            const stats = fs.statSync(fileInfo.path);
+                            currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+                            fs.rmSync(fileInfo.path, { force: true });
+                        } catch (e) { }
+                        fileDatabase.delete(f.fileId);
+                    }
+                }
+                bundleDatabase.delete(record.key);
             }
         }
     };
@@ -872,7 +1212,35 @@ if (enableUpload) {
                 try {
                     fs.rmSync(session.tempFilePath, { force: true });
                 } catch (e) { }
-                ongoingUploads.delete(id); // Removes reservation automatically
+                ongoingUploads.delete(id);
+            }
+        }
+
+        // Clean up zombie bundle sessions
+        for (const [id, session] of ongoingBundles.entries()) {
+            if (now > session.expiresAt) {
+                log('debug', 'Cleaning zombie bundle upload.');
+                // Clean up any individual upload sessions that belong to this bundle
+                for (const uploadId of session.fileUploadIds) {
+                    const uploadSession = ongoingUploads.get(uploadId);
+                    if (uploadSession) {
+                        try { fs.rmSync(uploadSession.tempFilePath, { force: true }); } catch (e) { }
+                        ongoingUploads.delete(uploadId);
+                    }
+                }
+                // Clean up any already-completed files from this bundle
+                for (const result of (session.completedFileResults || [])) {
+                    const fileInfo = fileDatabase.get(result.fileId);
+                    if (fileInfo) {
+                        try {
+                            const stats = fs.statSync(fileInfo.path);
+                            currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+                            fs.rmSync(fileInfo.path, { force: true });
+                        } catch (e) { }
+                        fileDatabase.delete(result.fileId);
+                    }
+                }
+                ongoingBundles.delete(id);
             }
         }
     };

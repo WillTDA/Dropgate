@@ -154,6 +154,12 @@ export interface P2PMetadataEvent {
   total: number;
   /** Call this to signal the sender to begin transfer (when autoReady is false). */
   sendReady?: () => void;
+  /** v3: Total number of files in a multi-file transfer (undefined for single file). */
+  fileCount?: number;
+  /** v3: List of all files (names and sizes) in a multi-file transfer. */
+  files?: Array<{ name: string; size: number }>;
+  /** v3: Total size across all files. */
+  totalSize?: number;
 }
 
 /** Completion event for P2P receive operations. */
@@ -202,8 +208,8 @@ export interface P2PResumeInfo {
  * Options for starting a P2P send session.
  */
 export interface P2PSendOptions extends P2PServerConfig {
-  /** File to send. */
-  file: FileSource;
+  /** File(s) to send. A single file or an array for multi-file transfers. */
+  file: FileSource | FileSource[];
   /** PeerJS Peer constructor - REQUIRED. */
   Peer: PeerConstructor;
   /** Server info (optional, for capability checking). */
@@ -347,8 +353,8 @@ export interface P2PReceiveSession {
  * are all provided internally by the client.
  */
 export interface P2PSendFileOptions {
-  /** File to send. */
-  file: FileSource;
+  /** File(s) to send. A single file or an array for multi-file transfers. */
+  file: FileSource | FileSource[];
   /** PeerJS Peer constructor - REQUIRED. */
   Peer: PeerConstructor;
   /** Custom code generator function. */

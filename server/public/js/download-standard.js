@@ -97,7 +97,7 @@ async function startDownload() {
     statusTitle.textContent = downloadState.isEncrypted ? 'Downloading & Decrypting' : 'Downloading';
     statusMessage.textContent = 'Streaming directly to file...';
 
-    await client.downloadFile({
+    await client.downloadFiles({
       fileId: downloadState.fileId,
       keyB64: downloadState.keyB64,
       timeoutMs: 0, // No timeout for large file downloads

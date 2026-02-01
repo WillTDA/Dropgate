@@ -9,6 +9,7 @@ import type {
 } from './types.js';
 import { generateP2PCode } from './utils.js';
 import { buildPeerOptions, createPeerWithRetries, resolvePeerConfig } from './helpers.js';
+import type { FileSource } from '../types.js';
 import {
   P2P_PROTOCOL_VERSION,
   P2P_CHUNK_SIZE,
@@ -19,6 +20,7 @@ import {
   isP2PMessage,
   type P2PChunkAckMessage,
   type P2PEndAckMessage,
+  type P2PFileEndAckMessage,
 } from './protocol.js';
 
 /**
@@ -104,9 +106,14 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     onConnectionHealth,
   } = opts;
 
+  // Normalize to files array
+  const files: FileSource[] = Array.isArray(file) ? file : [file];
+  const isMultiFile = files.length > 1;
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+
   // Validate required options
-  if (!file) {
-    throw new DropgateValidationError('File is missing.');
+  if (!files.length) {
+    throw new DropgateValidationError('At least one file is required.');
   }
 
   if (!Peer) {
@@ -180,7 +187,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
   const reportProgress = (data: { received: number; total: number }): void => {
     const safeTotal =
-      Number.isFinite(data.total) && data.total > 0 ? data.total : file.size;
+      Number.isFinite(data.total) && data.total > 0 ? data.total : totalSize;
     const safeReceived = Math.min(Number(data.received) || 0, safeTotal || 0);
     const percent = safeTotal ? (safeReceived / safeTotal) * 100 : 0;
     onProgress?.({ processedBytes: safeReceived, totalBytes: safeTotal, percent });
@@ -304,7 +311,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   const handleChunkAck = (msg: P2PChunkAckMessage): void => {
     lastActivityTime = Date.now();
     unackedChunks.delete(msg.seq);
-    reportProgress({ received: msg.received, total: file.size });
+    reportProgress({ received: msg.received, total: totalSize });
 
     // Resolve any pending waitForAck promises
     const resolver = ackResolvers.shift();
@@ -319,7 +326,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   };
 
   // Send chunk with sequence tracking
-  const sendChunk = async (conn: DataConnection, data: ArrayBuffer, offset: number): Promise<void> => {
+  const sendChunk = async (conn: DataConnection, data: ArrayBuffer, offset: number, fileTotal?: number): Promise<void> => {
     // Wait if too many unacknowledged chunks (flow control)
     if (chunkAcknowledgments) {
       while (unackedChunks.size >= maxUnackedChunks) {
@@ -337,7 +344,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     }
 
     // Send chunk header then binary data
-    conn.send({ t: 'chunk', seq, offset, size: data.byteLength, total: file.size });
+    conn.send({ t: 'chunk', seq, offset, size: data.byteLength, total: fileTotal ?? totalSize });
     conn.send(data);
     sentBytes += data.byteLength;
 
@@ -454,6 +461,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     let helloResolve: ((version: number) => void) | null = null;
     let readyResolve: (() => void) | null = null;
     let endAckResolve: ((msg: P2PEndAckMessage) => void) | null = null;
+    let fileEndAckResolve: ((msg: P2PFileEndAckMessage) => void) | null = null;
 
     const helloPromise = new Promise<number>((resolve) => {
       helloResolve = resolve;
@@ -491,6 +499,10 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
         case 'chunk_ack':
           handleChunkAck(msg as P2PChunkAckMessage);
+          break;
+
+        case 'file_end_ack':
+          fileEndAckResolve?.(msg as P2PFileEndAckMessage);
           break;
 
         case 'end_ack':
@@ -547,16 +559,26 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
         transitionTo('negotiating');
         onStatus?.({ phase: 'waiting', message: 'Connected. Waiting for receiver to accept...' });
 
-        // Send metadata with sessionId
+        // v3: Send file_list for multi-file transfers
+        if (isMultiFile) {
+          conn.send({
+            t: 'file_list',
+            fileCount: files.length,
+            files: files.map(f => ({ name: f.name, size: f.size, mime: f.type || 'application/octet-stream' })),
+            totalSize,
+          });
+        }
+
+        // Send metadata for the first file (or the only file)
         conn.send({
           t: 'meta',
           sessionId,
-          name: file.name,
-          size: file.size,
-          mime: file.type || 'application/octet-stream',
+          name: files[0].name,
+          size: files[0].size,
+          mime: files[0].type || 'application/octet-stream',
+          ...(isMultiFile ? { fileIndex: 0 } : {}),
         });
 
-        const total = file.size;
         const dc = conn._dc;
 
         if (dc && Number.isFinite(bufferLowWaterMark)) {
@@ -586,15 +608,58 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
         transitionTo('transferring');
 
-        // Send file in chunks
-        for (let offset = 0; offset < total; offset += chunkSize) {
+        let overallSentBytes = 0;
+
+        // Send file(s) in chunks
+        for (let fi = 0; fi < files.length; fi++) {
+          const currentFile = files[fi];
+
+          // For multi-file (after first file), send meta for subsequent files
+          if (isMultiFile && fi > 0) {
+            conn.send({
+              t: 'meta',
+              sessionId,
+              name: currentFile.name,
+              size: currentFile.size,
+              mime: currentFile.type || 'application/octet-stream',
+              fileIndex: fi,
+            });
+          }
+
+          // Send this file's chunks
+          for (let offset = 0; offset < currentFile.size; offset += chunkSize) {
+            if (isStopped()) return;
+
+            const slice = currentFile.slice(offset, offset + chunkSize);
+            const buf = await slice.arrayBuffer();
+            if (isStopped()) return;
+
+            await sendChunk(conn, buf, offset, currentFile.size);
+            overallSentBytes += buf.byteLength;
+            reportProgress({ received: overallSentBytes, total: totalSize });
+          }
+
           if (isStopped()) return;
 
-          const slice = file.slice(offset, offset + chunkSize);
-          const buf = await slice.arrayBuffer();
-          if (isStopped()) return;
+          // For multi-file: send file_end and wait for file_end_ack
+          if (isMultiFile) {
+            const fileEndAckPromise = new Promise<P2PFileEndAckMessage>((resolve) => {
+              fileEndAckResolve = resolve;
+            });
 
-          await sendChunk(conn, buf, offset);
+            conn.send({ t: 'file_end', fileIndex: fi });
+
+            const feAck = await Promise.race([
+              fileEndAckPromise,
+              sleep(endAckTimeoutMs).then(() => null as P2PFileEndAckMessage | null),
+            ]);
+
+            if (isStopped()) return;
+
+            if (!feAck) {
+              throw new DropgateNetworkError(`Receiver did not confirm receipt of file ${fi + 1}/${files.length}.`);
+            }
+          }
         }
 
         if (isStopped()) return;
@@ -607,7 +672,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
         if (isStopped()) return;
 
-        const ackTotal = Number(ackResult.total) || file.size;
+        const ackTotal = Number(ackResult.total) || totalSize;
         const ackReceived = Number(ackResult.received) || 0;
 
         if (ackTotal && ackReceived < ackTotal) {

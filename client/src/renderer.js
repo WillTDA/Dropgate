@@ -21,7 +21,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const fileLifetimeValueInput = document.getElementById('file-lifetime-value');
         const fileLifetimeUnitSelect = document.getElementById('file-lifetime-unit');
         const fileLifetimeHelp = document.getElementById('file-lifetime-help');
-        const maxDownloadsSection = document.getElementById('max-downloads-section');
         const maxDownloadsValue = document.getElementById('max-downloads-value');
         const maxDownloadsHelp = document.getElementById('max-downloads-help');
 
@@ -405,8 +404,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             saveSettings();
 
             try {
-                const session = await coreClient.uploadFile({
-                    file: selectedFile,
+                const session = await coreClient.uploadFiles({
+                    files: selectedFile,
                     lifetimeMs,
                     maxDownloads: (() => {
                         const val = parseInt(maxDownloadsValue.value, 10);
@@ -803,12 +802,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // Update max upload size hint
+            // Update max file size hint
             const maxSizeBytes = serverCapabilities.upload.maxSizeMB * 1000 * 1000;
             if (maxSizeBytes === 0) {
                 maxUploadHint.textContent = 'You can upload files of any size.';
             } else {
-                maxUploadHint.textContent = `Max upload size: ${formatBytes(maxSizeBytes)}.`;
+                maxUploadHint.textContent = `Max file size: ${formatBytes(maxSizeBytes)}.`;
             }
 
             // Update Security Status UI (Auto-managed E2EE)

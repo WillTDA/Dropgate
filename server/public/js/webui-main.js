@@ -14,8 +14,9 @@ const els = {
   selectFileBtn: $('selectFileBtn'),
   fileInput: $('fileInput'),
   fileChosen: $('fileChosen'),
-  fileChosenName: $('fileChosenName'),
-  fileChosenSize: $('fileChosenSize'),
+  fileChosenSummary: $('fileChosenSummary'),
+  fileChosenList: $('fileChosenList'),
+  fileChosenTotal: $('fileChosenTotal'),
   maxUploadHint: $('maxUploadHint'),
 
   modeStandard: $('modeStandard'),
@@ -81,7 +82,7 @@ const els = {
 
 const state = {
   info: null,
-  file: null,
+  files: [],
   fileTooLargeForStandard: false,
   mode: 'standard',
   encrypt: true,
@@ -206,29 +207,53 @@ function showPanels(which) {
 }
 
 function updateFileUI() {
-  if (!state.file) {
+  if (!state.files.length) {
     setHidden(els.fileChosen, true);
     els.dropzone?.classList.remove('dragover');
     return;
   }
-  els.fileChosenName.textContent = state.file.name;
-  els.fileChosenSize.textContent = formatBytes(state.file.size);
+
+  const count = state.files.length;
+  els.fileChosenSummary.textContent = count === 1 ? '1 file selected' : `${count} files selected`;
+
+  els.fileChosenList.innerHTML = '';
+  for (const f of state.files) {
+    const li = document.createElement('li');
+    li.className = 'd-flex justify-content-between small';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'text-truncate me-2';
+    nameSpan.textContent = f.name;
+    nameSpan.title = f.name;
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'text-body-secondary flex-shrink-0';
+    sizeSpan.textContent = formatBytes(f.size);
+    li.appendChild(nameSpan);
+    li.appendChild(sizeSpan);
+    els.fileChosenList.appendChild(li);
+  }
+
+  const totalSize = state.files.reduce((sum, f) => sum + f.size, 0);
+  els.fileChosenTotal.textContent = `Total: ${formatBytes(totalSize)}`;
   setHidden(els.fileChosen, false);
 }
 
-function isFileTooLargeForStandard(file) {
-  if (!file || !state.uploadEnabled) return false;
+function areFilesTooLargeForStandard(files) {
+  if (!files.length || !state.uploadEnabled) return false;
   const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
     ? state.maxSizeMB * 1000 * 1000
     : null;
   if (!maxBytes) return false;
-  const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
-  const estimatedBytes = estimateTotalUploadSizeBytes(file.size, totalChunks, Boolean(state.encrypt));
-  return estimatedBytes > maxBytes;
+  // Check total estimated size across all files
+  let totalEstimated = 0;
+  for (const file of files) {
+    const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
+    totalEstimated += estimateTotalUploadSizeBytes(file.size, totalChunks, Boolean(state.encrypt));
+  }
+  return totalEstimated > maxBytes;
 }
 
 function updateStartEnabled() {
-  const hasFile = Boolean(state.file);
+  const hasFile = state.files.length > 0;
   if (state.mode === 'standard') {
     const lifetimeOk = validateLifetimeInput();
     const maxDownloadsOk = validateMaxDownloadsInput();
@@ -240,18 +265,23 @@ function updateStartEnabled() {
   }
 }
 
-function handleFileSelection(file) {
-  state.file = file || null;
+function handleFileSelection(files) {
+  if (!files || files.length === 0) {
+    state.files = [];
+  } else {
+    // Append new files to existing selection
+    state.files = [...state.files, ...Array.from(files)];
+  }
   updateFileUI();
 
   state.fileTooLargeForStandard = false;
-  if (state.file && state.mode === 'standard' && isFileTooLargeForStandard(state.file)) {
+  if (state.files.length && state.mode === 'standard' && areFilesTooLargeForStandard(state.files)) {
     state.fileTooLargeForStandard = true;
     if (state.p2pEnabled && state.p2pSecureOk) {
       setMode('p2p');
-      showToast('File exceeds the server upload limit — using direct transfer.');
+      showToast('Files exceed the server upload limit — using direct transfer.');
     } else {
-      showToast('File exceeds the server upload limit and cannot be uploaded.', 'danger');
+      showToast('Files exceed the server upload limit and cannot be uploaded.', 'danger');
     }
   }
 
@@ -276,7 +306,7 @@ function setMode(mode) {
     els.startBtn.textContent = 'Start Transfer';
   }
 
-  state.fileTooLargeForStandard = Boolean(state.file && isFileTooLargeForStandard(state.file));
+  state.fileTooLargeForStandard = Boolean(state.files.length && areFilesTooLargeForStandard(state.files));
   if (state.fileTooLargeForStandard && isStandard) {
     if (state.p2pEnabled && state.p2pSecureOk) {
       showToast('File exceeds the server upload limit — using direct transfer.');
@@ -375,7 +405,7 @@ function updateCapabilitiesUI() {
   if (state.uploadEnabled) {
     const maxText = (state.maxSizeMB === 0)
       ? 'You can upload files of any size.'
-      : `Max upload size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
+      : `Max file size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
     els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
@@ -607,10 +637,10 @@ function showShare({ link = '', title = 'Upload Complete', sub = 'Share this lin
 }
 
 function resetToMain() {
-  state.file = null;
+  state.files = [];
   state.fileTooLargeForStandard = false;
   updateFileUI();
-  els.tagline.textContent = 'Send a file securely, or enter a sharing code to receive one.';
+  els.tagline.textContent = 'Send files securely, or enter a sharing code to receive.';
   showPanels('main');
   els.shareLink.value = '';
   els.p2pLink.value = '';
@@ -682,9 +712,9 @@ async function startStandardUpload() {
     return;
   }
 
-  const file = state.file;
-  if (!file) {
-    showToast('Select a file first.', 'warning');
+  const files = state.files;
+  if (!files.length) {
+    showToast('Select at least one file first.', 'warning');
     return;
   }
 
@@ -700,18 +730,23 @@ async function startStandardUpload() {
     ? state.maxSizeMB * 1000 * 1000
     : null;
   if (maxBytes) {
-    const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
-    const estimatedBytes = estimateTotalUploadSizeBytes(file.size, totalChunks, encrypt);
-    if (estimatedBytes > maxBytes) {
+    let totalEstimated = 0;
+    for (const f of files) {
+      const totalChunks = Math.ceil(f.size / DEFAULT_CHUNK_SIZE);
+      totalEstimated += estimateTotalUploadSizeBytes(f.size, totalChunks, encrypt);
+    }
+    if (totalEstimated > maxBytes) {
       if (state.p2pEnabled && state.p2pSecureOk) {
         setMode('p2p');
-        showToast('File exceeds the server upload limit — using direct transfer.');
+        showToast('Files exceed the server upload limit — using direct transfer.');
         return startP2PSendFlow();
       }
-      showToast('File exceeds the server upload limit and cannot be uploaded.', 'danger');
+      showToast('Files exceed the server upload limit and cannot be uploaded.', 'danger');
       return;
     }
   }
+
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0);
 
   if (!validateLifetimeInput()) {
     showToast('File lifetime exceeds server limits.', 'danger');
@@ -721,30 +756,31 @@ async function startStandardUpload() {
   const lifetimeMs = lifetimeMsFromUI();
   els.tagline.textContent = 'Standard Upload';
 
-  showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
+  showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: totalSize, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
-    const session = await coreClient.uploadFile({
-      file,
+    const session = await coreClient.uploadFiles({
+      files,
       encrypt,
       lifetimeMs,
       maxDownloads: (() => {
         const val = parseInt(els.maxDownloadsValue.value, 10);
         return (Number.isInteger(val) && val >= 0) ? val : 1;
       })(),
-      onProgress: ({ phase, text, percent }) => {
+      onProgress: ({ phase, text, percent, currentFileName }) => {
         const p = (typeof percent === 'number') ? percent : 0;
+        const sub = currentFileName ? `${text || phase} — ${currentFileName}` : (text || phase);
 
         // Update title and store progress for visibility handler
         updateTitleProgress(p);
         currentTransferProgress = {
           percent: p,
-          doneBytes: Math.floor((p / 100) * file.size),
-          totalBytes: file.size,
+          doneBytes: Math.floor((p / 100) * totalSize),
+          totalBytes: totalSize,
           showProgress: (pct, done, total) => {
             showProgress({
               title: 'Uploading',
-              sub: text || phase,
+              sub,
               percent: pct,
               doneBytes: done,
               totalBytes: total,
@@ -756,10 +792,10 @@ async function startStandardUpload() {
 
         showProgress({
           title: 'Uploading',
-          sub: text || phase,
+          sub,
           percent: p,
-          doneBytes: Math.floor((p / 100) * file.size),
-          totalBytes: file.size,
+          doneBytes: Math.floor((p / 100) * totalSize),
+          totalBytes: totalSize,
           icon: 'cloud_upload',
           iconColor: 'text-primary',
         });
@@ -790,7 +826,7 @@ async function startStandardUpload() {
     state.uploadSession = null;
 
     resetTitleProgress();
-    showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'cloud_upload' });
+    showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: totalSize, totalBytes: totalSize, icon: 'cloud_upload' });
     showShare({ link: result.downloadUrl });
   } catch (err) {
     // Hide cancel button on error
@@ -805,7 +841,7 @@ async function startStandardUpload() {
     }
 
     console.error(err);
-    showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
+    showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: totalSize, icon: 'error', iconColor: 'text-danger' });
     showToast(err?.message || 'Upload failed.', 'danger');
   }
 }
@@ -836,11 +872,12 @@ async function startP2PSendFlow() {
     return;
   }
 
-  const file = state.file;
-  if (!file) {
-    showToast('Select a file first.', 'warning');
+  if (!state.files.length) {
+    showToast('Select at least one file first.', 'warning');
     return;
   }
+
+  const file = state.files.length === 1 ? state.files[0] : state.files;
 
   // Load PeerJS before starting P2P
   let Peer;
@@ -970,10 +1007,10 @@ function wireUI() {
   });
 
   els.fileInput?.addEventListener('change', () => {
-    const f = els.fileInput.files?.[0];
-    if (!f) return;
-    handleFileSelection(f);
-    // Reset the input so the same file can be selected again
+    const fileList = els.fileInput.files;
+    if (!fileList || !fileList.length) return;
+    handleFileSelection(fileList);
+    // Reset the input so the same files can be selected again
     els.fileInput.value = '';
   });
 
@@ -991,9 +1028,9 @@ function wireUI() {
     });
   });
   els.dropzone?.addEventListener('drop', (e) => {
-    const f = e.dataTransfer?.files?.[0];
-    if (!f) return;
-    handleFileSelection(f);
+    const fileList = e.dataTransfer?.files;
+    if (!fileList || !fileList.length) return;
+    handleFileSelection(fileList);
   });
 
   // Mode toggles

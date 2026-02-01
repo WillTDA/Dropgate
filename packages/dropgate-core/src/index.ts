@@ -35,17 +35,18 @@ export type {
   FileSource,
   DropgateClientOptions,
   ServerTarget,
-  UploadFileOptions,
+  UploadFilesOptions,
   GetServerInfoOptions,
   ConnectOptions,
   ValidateUploadOptions,
   FileMetadata,
   DownloadProgressEvent,
-  DownloadFileOptions,
+  DownloadFilesOptions,
   DownloadResult,
+  BundleMetadata,
 } from './types.js';
 
-// Upload session type (not in types.ts, part of UploadSession)
+// Upload session type
 export type { UploadSession } from './types.js';
 
 // Utils - Base64
@@ -75,6 +76,9 @@ export {
   decryptFilenameFromBase64,
 } from './crypto/index.js';
 export { encryptToBlob, encryptFilenameToBase64 } from './crypto/encrypt.js';
+
+// ZIP
+export { StreamingZipWriter } from './zip/stream-zip.js';
 
 // Client
 export { DropgateClient, estimateTotalUploadSizeBytes, getServerInfo } from './client/DropgateClient.js';

@@ -11,6 +11,8 @@ export default defineConfig([
     target: 'es2020',
     splitting: false,
     external: ['peerjs'],
+    noExternal: ['fflate'],
+    platform: 'browser',
   },
   // P2P submodule - ESM and CJS
   {
@@ -21,6 +23,8 @@ export default defineConfig([
     target: 'es2020',
     splitting: false,
     external: ['peerjs'],
+    noExternal: ['fflate'],
+    platform: 'browser',
   },
   // Browser bundle (IIFE)
   {
