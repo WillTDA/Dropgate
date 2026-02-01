@@ -406,7 +406,11 @@ export interface BundleMetadata {
   totalSizeBytes: number;
   /** Number of files in the bundle. */
   fileCount: number;
-  /** Individual file metadata entries. */
+  /** Whether the bundle manifest is encrypted (sealed). Only the downloader can read the file list. */
+  sealed?: boolean;
+  /** Base64-encoded encrypted manifest blob (only present for sealed bundles). */
+  encryptedManifest?: string;
+  /** Individual file metadata entries. Populated from server for unsealed bundles, or from decrypted manifest for sealed bundles. */
   files: Array<{
     /** File ID for downloading this individual file. */
     fileId: string;

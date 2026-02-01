@@ -1,4 +1,4 @@
-import { DropgateClient, importKeyFromBase64, decryptFilenameFromBase64 } from './dropgate-core.js';
+import { DropgateClient, importKeyFromBase64, decryptFilenameFromBase64, decryptChunk } from './dropgate-core.js';
 import { setStatusError, setStatusSuccess, StatusType, Icons, updateStatusCard } from './status-card.js';
 
 const statusTitle = document.getElementById('status-title');
@@ -364,7 +364,6 @@ async function loadMetadata() {
     const meta = await response.json();
     bundleState.isEncrypted = Boolean(meta.isEncrypted);
     bundleState.totalSizeBytes = meta.totalSizeBytes;
-    bundleState.files = meta.files;
 
     bundleFileCount.textContent = `${meta.fileCount}`;
     bundleTotalSize.textContent = formatBytes(meta.totalSizeBytes);
@@ -385,13 +384,29 @@ async function loadMetadata() {
       }
 
       bundleState.keyB64 = hash;
-
-      // Decrypt filenames
       const key = await importKeyFromBase64(crypto, hash);
-      for (const f of meta.files) {
-        bundleState.filenames.push(await decryptFilenameFromBase64(crypto, f.encryptedFilename, key));
+
+      if (meta.sealed && meta.encryptedManifest) {
+        // Sealed bundle: decrypt the manifest to discover the file list
+        const encryptedBytes = Uint8Array.from(atob(meta.encryptedManifest), c => c.charCodeAt(0));
+        const decryptedBuffer = await decryptChunk(crypto, encryptedBytes, key);
+        const manifestJson = new TextDecoder().decode(decryptedBuffer);
+        const manifest = JSON.parse(manifestJson);
+
+        bundleState.files = manifest.files.map(f => ({
+          fileId: f.fileId,
+          sizeBytes: f.sizeBytes,
+        }));
+        bundleState.filenames = manifest.files.map(f => f.name);
+      } else {
+        // Non-sealed encrypted bundle: decrypt individual filenames
+        bundleState.files = meta.files;
+        for (const f of meta.files) {
+          bundleState.filenames.push(await decryptFilenameFromBase64(crypto, f.encryptedFilename, key));
+        }
       }
     } else {
+      bundleState.files = meta.files;
       for (const f of meta.files) {
         bundleState.filenames.push(f.filename || 'file');
       }

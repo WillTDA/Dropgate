@@ -220,22 +220,22 @@ function updateFileUI() {
   for (let i = 0; i < state.files.length; i++) {
     const f = state.files[i];
     const li = document.createElement('li');
-    li.className = 'd-flex align-items-center small mb-1';
+    li.className = 'd-flex align-items-center small file-list-item';
     const nameSpan = document.createElement('span');
     nameSpan.className = 'text-truncate me-2';
     nameSpan.textContent = f.name;
     nameSpan.title = f.name;
     const rightSide = document.createElement('span');
-    rightSide.className = 'd-flex align-items-center gap-1 flex-shrink-0 ms-auto';
+    rightSide.className = 'd-flex align-items-center gap-2 flex-shrink-0 ms-auto';
     const sizeSpan = document.createElement('span');
     sizeSpan.className = 'text-body-secondary';
     sizeSpan.textContent = formatBytes(f.size);
     rightSide.appendChild(sizeSpan);
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
-    removeBtn.className = 'btn btn-sm p-0 border-0 text-body-secondary';
+    removeBtn.className = 'file-remove-btn';
     removeBtn.title = 'Remove file';
-    removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 16px; vertical-align: middle;">close</span>';
+    removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 14px;">close</span>';
     removeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       state.files.splice(i, 1);
@@ -420,9 +420,10 @@ function updateCapabilitiesUI() {
 
   // Upload
   if (state.uploadEnabled) {
+    const sizeLabel = state.bundleSizeMode === 'per-file' ? 'Max single file size' : 'Max upload size';
     const maxText = (state.maxSizeMB === 0)
       ? 'You can upload files of any size.'
-      : `Max single file size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
+      : `${sizeLabel}: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
     els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
@@ -516,6 +517,7 @@ async function loadServerInfo() {
   const upload = info?.capabilities?.upload;
   state.uploadEnabled = Boolean(upload?.enabled);
   state.maxSizeMB = state.uploadEnabled ? (upload?.maxSizeMB ?? null) : null;
+  state.bundleSizeMode = state.uploadEnabled ? (upload?.bundleSizeMode ?? 'total') : 'total';
   state.maxLifetimeHours = state.uploadEnabled ? (upload?.maxLifetimeHours ?? null) : null;
   state.maxFileDownloads = state.uploadEnabled ? (upload?.maxFileDownloads ?? 1) : 1;
   state.e2ee = state.uploadEnabled ? Boolean(upload?.e2ee) : false;
@@ -971,7 +973,7 @@ async function startP2PSendFlow() {
       stopP2P();
       showShare({
         title: 'Transfer Complete',
-        sub: 'Your recipient has received the file.',
+        sub: `Your recipient has received the file${Array.isArray(file) ? 's' : ''}.`,
         showLinkGroup: false,
       });
     },

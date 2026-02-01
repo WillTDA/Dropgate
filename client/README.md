@@ -34,6 +34,8 @@ It’s built to feel simple: pick a file, choose your options, hit upload, and s
 
 * 🖥️ **Cross-Platform Support** | Available for Windows, macOS, and Linux.
 
+* 📦 **Multi-File Uploads** | Select or drag-and-drop multiple files at once — they're bundled together and uploaded in one go.
+
 * ⚡ **Fast, Lightweight Interface** | Simple drag-and-drop UI focused on minimalism and clarity.
 
 * 🧩 **Smart Compatibility Checks** | The client reads server capabilities (limits, encryption support, etc.) so you don’t run into surprises mid-upload.

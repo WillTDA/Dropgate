@@ -1587,6 +1587,8 @@ async function startP2PReceive(opts) {
     onMeta,
     onData,
     onProgress,
+    onFileStart,
+    onFileEnd,
     onComplete,
     onError,
     onDisconnect,
@@ -1799,6 +1801,7 @@ async function startP2PReceive(opts) {
             const fi = msg.fileIndex;
             if (fileList && typeof fi === "number" && fi > 0) {
               currentFileReceived = 0;
+              onFileStart?.({ fileIndex: fi, name, size: fileSize });
               break;
             }
             received = 0;
@@ -1811,6 +1814,9 @@ async function startP2PReceive(opts) {
             const sendReady = () => {
               transitionTo("transferring");
               resetWatchdog();
+              if (fileList) {
+                onFileStart?.({ fileIndex: 0, name, size: fileSize });
+              }
               try {
                 conn.send({ t: "ready" });
               } catch {
@@ -1846,6 +1852,7 @@ async function startP2PReceive(opts) {
             clearWatchdog();
             await writeQueue;
             const feIdx = msg.fileIndex;
+            onFileEnd?.({ fileIndex: feIdx, receivedBytes: currentFileReceived });
             try {
               conn.send({ t: "file_end_ack", fileIndex: feIdx, received: currentFileReceived, size: currentFileReceived });
             } catch {
@@ -2473,12 +2480,29 @@ var DropgateClient = class {
         }
         progress({ phase: "complete", text: "Finalising bundle...", percent: 100, processedBytes: totalSizeBytes, totalBytes: totalSizeBytes });
         uploadState = "completing";
+        let encryptedManifestB64;
+        if (effectiveEncrypt && cryptoKey) {
+          const manifest = JSON.stringify({
+            files: fileResults.map((r) => ({
+              fileId: r.fileId,
+              name: r.name,
+              sizeBytes: r.size
+            }))
+          });
+          const manifestBytes = new TextEncoder().encode(manifest);
+          const encryptedBlob = await encryptToBlob(this.cryptoObj, manifestBytes.buffer, cryptoKey);
+          const encryptedBuffer = new Uint8Array(await encryptedBlob.arrayBuffer());
+          encryptedManifestB64 = this.base64.encode(encryptedBuffer);
+        }
         const completeBundleRes = await fetchJson(this.fetchFn, `${baseUrl}/upload/complete-bundle`, {
           method: "POST",
           timeoutMs: timeouts.completeMs ?? 3e4,
           signal: effectiveSignal,
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ bundleUploadId })
+          body: JSON.stringify({
+            bundleUploadId,
+            ...encryptedManifestB64 ? { encryptedManifest: encryptedManifestB64 } : {}
+          })
         });
         if (!completeBundleRes.res.ok) {
           const errorJson = completeBundleRes.json;
@@ -2665,11 +2689,27 @@ var DropgateClient = class {
       if (!this.cryptoObj?.subtle) throw new DropgateValidationError("Web Crypto API not available for decryption.");
       try {
         cryptoKey = await importKeyFromBase64(this.cryptoObj, keyB64, this.base64);
-        for (const f of bundleMeta.files) {
-          filenames.push(await decryptFilenameFromBase64(this.cryptoObj, f.encryptedFilename, cryptoKey, this.base64));
+        if (bundleMeta.sealed && bundleMeta.encryptedManifest) {
+          const encryptedBytes = this.base64.decode(bundleMeta.encryptedManifest);
+          const decryptedBuffer = await decryptChunk(this.cryptoObj, encryptedBytes, cryptoKey);
+          const manifestJson = new TextDecoder().decode(decryptedBuffer);
+          const manifest = JSON.parse(manifestJson);
+          bundleMeta.files = manifest.files.map((f) => ({
+            fileId: f.fileId,
+            sizeBytes: f.sizeBytes,
+            filename: f.name
+          }));
+          bundleMeta.fileCount = bundleMeta.files.length;
+          for (const f of bundleMeta.files) {
+            filenames.push(f.filename || "file");
+          }
+        } else {
+          for (const f of bundleMeta.files) {
+            filenames.push(await decryptFilenameFromBase64(this.cryptoObj, f.encryptedFilename, cryptoKey, this.base64));
+          }
         }
       } catch (err2) {
-        throw new DropgateError("Failed to decrypt filenames.", { code: "DECRYPT_FILENAME_FAILED", cause: err2 });
+        throw new DropgateError("Failed to decrypt bundle manifest.", { code: "DECRYPT_MANIFEST_FAILED", cause: err2 });
       }
     } else {
       for (const f of bundleMeta.files) {

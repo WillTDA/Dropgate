@@ -74,10 +74,10 @@ console.log('Upload enabled:', serverInfo.capabilities?.upload?.enabled);
 console.log('P2P enabled:', serverInfo.capabilities?.p2p?.enabled);
 ```
 
-### Uploading a File
+### Uploading Files
 
 ```javascript
-const session = await client.uploadFile({
+const session = await client.uploadFiles({
   file: myFile, // File or Blob (implements FileSource)
   lifetimeMs: 3600000, // 1 hour
   maxDownloads: 5,
@@ -94,11 +94,11 @@ console.log('Download URL:', result.downloadUrl);
 // session.cancel('User cancelled');
 ```
 
-### Downloading a File
+### Downloading Files
 
 ```javascript
 // Download with streaming (for large files)
-const result = await client.downloadFile({
+const result = await client.downloadFiles({
   fileId: 'abc123',
   keyB64: 'base64-key-from-url-hash', // Required for encrypted files
   onProgress: ({ phase, percent, processedBytes, totalBytes }) => {
@@ -112,7 +112,7 @@ const result = await client.downloadFile({
 console.log('Downloaded:', result.filename);
 
 // Or download to memory (for small files — omit onData)
-const memoryResult = await client.downloadFile({ fileId: 'abc123' });
+const memoryResult = await client.downloadFiles({ fileId: 'abc123' });
 console.log('File size:', memoryResult.data?.length);
 ```
 
@@ -148,14 +148,22 @@ const Peer = await loadPeerJS();
 const session = await client.p2pReceive({
   code: 'ABCD-1234',
   Peer,
-  onMeta: ({ name, total }) => {
+  onMeta: ({ name, total, fileCount, files }) => {
     console.log(`Receiving: ${name} (${total} bytes)`);
+    if (fileCount) console.log(`Multi-file transfer: ${fileCount} files`);
   },
   onData: async (chunk) => {
     await writer.write(chunk);
   },
   onProgress: ({ processedBytes, totalBytes, percent }) => {
     console.log(`Receiving: ${percent.toFixed(1)}%`);
+  },
+  // Multi-file transfers: called when each individual file starts/ends
+  onFileStart: ({ fileIndex, name, size }) => {
+    console.log(`File ${fileIndex}: ${name} (${size} bytes)`);
+  },
+  onFileEnd: ({ fileIndex, receivedBytes }) => {
+    console.log(`File ${fileIndex} complete (${receivedBytes} bytes)`);
   },
   onComplete: ({ received, total }) => console.log(`Complete! ${received}/${total}`),
   onCancel: ({ cancelledBy }) => console.log(`Cancelled by ${cancelledBy}`),
@@ -239,8 +247,8 @@ The main client class for interacting with Dropgate servers.
 | Method | Description |
 | --- | --- |
 | `connect(opts?)` | Fetch server info, check compatibility, cache result |
-| `uploadFile(opts)` | Upload a file with optional encryption |
-| `downloadFile(opts)` | Download a file with optional decryption |
+| `uploadFiles(opts)` | Upload a file with optional encryption |
+| `downloadFiles(opts)` | Download a file with optional decryption |
 | `p2pSend(opts)` | Start a P2P send session |
 | `p2pReceive(opts)` | Start a P2P receive session |
 | `validateUploadInputs(opts)` | Validate file and settings before upload |
@@ -263,7 +271,74 @@ The main client class for interacting with Dropgate servers.
 | `lifetimeToMs(value, unit)` | Convert lifetime to milliseconds |
 | `estimateTotalUploadSizeBytes(...)` | Estimate upload size with encryption overhead |
 | `bytesToBase64(bytes)` | Convert bytes to base64 |
+| `arrayBufferToBase64(buffer)` | Convert an ArrayBuffer to base64 |
 | `base64ToBytes(b64)` | Convert base64 to bytes |
+| `parseSemverMajorMinor(version)` | Parse a semver string into `{ major, minor }` |
+| `validatePlainFilename(name)` | Validate that a filename has no path traversal or illegal characters |
+
+### Crypto Functions
+
+| Function | Description |
+| --- | --- |
+| `sha256Hex(data)` | Compute a SHA-256 hex digest |
+| `generateAesGcmKey()` | Generate a random AES-256-GCM CryptoKey |
+| `exportKeyBase64(key)` | Export a CryptoKey as a base64 string |
+| `importKeyFromBase64(b64)` | Import a CryptoKey from a base64 string |
+| `encryptToBlob(blob, key)` | Encrypt a Blob with AES-256-GCM |
+| `encryptFilenameToBase64(name, key)` | Encrypt a filename string to base64 |
+| `decryptChunk(chunk, key)` | Decrypt an AES-256-GCM encrypted chunk |
+| `decryptFilenameFromBase64(b64, key)` | Decrypt a filename from base64 |
+
+### Adapter Defaults
+
+| Function | Description |
+| --- | --- |
+| `getDefaultFetch()` | Get the default `fetch` implementation for the current environment |
+| `getDefaultCrypto()` | Get the default `CryptoAdapter` (Web Crypto API) |
+| `getDefaultBase64()` | Get the default `Base64Adapter` for the current environment |
+
+### Network Helpers (advanced)
+
+| Function | Description |
+| --- | --- |
+| `buildBaseUrl(server)` | Build a base URL string from a server URL or `ServerTarget` |
+| `parseServerUrl(url)` | Parse a URL string into a `ServerTarget` |
+| `fetchJson(url, opts?)` | Fetch JSON with timeout and error handling |
+| `sleep(ms)` | Promise-based delay |
+| `makeAbortSignal(timeoutMs?)` | Create an `AbortSignal` with optional timeout |
+
+### Constants
+
+| Constant | Description |
+| --- | --- |
+| `DEFAULT_CHUNK_SIZE` | Default upload chunk size in bytes (5 MB) |
+| `AES_GCM_IV_BYTES` | AES-GCM initialisation vector length |
+| `AES_GCM_TAG_BYTES` | AES-GCM authentication tag length |
+| `ENCRYPTION_OVERHEAD_PER_CHUNK` | Total encryption overhead added to each chunk |
+
+### StreamingZipWriter
+
+A streaming ZIP assembler for multi-file P2P transfers. Wraps [fflate](https://github.com/101arrowz/fflate) and produces a valid ZIP archive without buffering entire files in memory.
+
+```javascript
+import { StreamingZipWriter } from '@dropgate/core';
+
+const zipWriter = new StreamingZipWriter((zipChunk) => {
+  // Write each ZIP chunk to your output (e.g., StreamSaver writer)
+  writer.write(zipChunk);
+});
+
+zipWriter.startFile('photo.jpg');
+zipWriter.writeChunk(chunk1);
+zipWriter.writeChunk(chunk2);
+zipWriter.endFile();
+
+zipWriter.startFile('notes.txt');
+zipWriter.writeChunk(chunk3);
+zipWriter.endFile();
+
+zipWriter.finalize(); // Flush remaining data and write ZIP footer
+```
 
 ### Error Classes
 

@@ -1,4 +1,4 @@
-import { DropgateClient, isSecureContextForP2P } from './dropgate-core.js';
+import { DropgateClient, isSecureContextForP2P, StreamingZipWriter } from './dropgate-core.js';
 import { setStatusError, setStatusSuccess, StatusType, Icons, updateStatusCard, clearStatusBorder } from './status-card.js';
 
 const elTitle = document.getElementById('title');
@@ -30,6 +30,8 @@ let total = 0;
 let received = 0;
 let transferCompleted = false;
 let writer = null;
+let zipWriter = null;
+let isMultiFile = false;
 let pendingSendReady = null;
 let fileName = null;
 let p2pSession = null;
@@ -166,8 +168,15 @@ function startDownload() {
 
   // Create streamSaver write stream
   if (window.streamSaver?.createWriteStream) {
-    const stream = window.streamSaver.createWriteStream(fileName, total ? { size: total } : undefined);
+    const stream = window.streamSaver.createWriteStream(fileName, isMultiFile ? undefined : (total ? { size: total } : undefined));
     writer = stream.getWriter();
+
+    // For multi-file transfers, set up a StreamingZipWriter that pipes ZIP data into the StreamSaver writer
+    if (isMultiFile) {
+      zipWriter = new StreamingZipWriter(async (chunk) => {
+        await writer.write(chunk);
+      });
+    }
   }
 
   // Wire up cancel button
@@ -220,7 +229,8 @@ async function start() {
       onMeta: ({ name, total: nextTotal, sendReady, fileCount, files, totalSize }) => {
         total = totalSize || nextTotal;
         received = 0;
-        fileName = fileCount > 1 ? `dropgate-bundle-${code}.zip` : name;
+        isMultiFile = fileCount > 1;
+        fileName = isMultiFile ? `dropgate-bundle-${code}.zip` : name;
 
         // Store the sendReady function to call when user clicks download
         pendingSendReady = sendReady;
@@ -229,14 +239,14 @@ async function start() {
         elTitle.textContent = 'Ready to Transfer';
         elMsg.textContent = 'Review the file details below, then click Start Transfer.';
 
-        elFileName.textContent = fileCount > 1 ? fileCount : name;
-        elFileNameLabel.textContent = fileCount > 1 ? 'Files' : 'File name';
+        elFileName.textContent = isMultiFile ? fileCount : name;
+        elFileNameLabel.textContent = isMultiFile ? 'Files' : 'File name';
         elFileSize.textContent = formatBytes(total);
         elFileDetails.style.display = 'block';
         elDownloadBtn.style.display = 'inline-block';
 
         // Build collapsible file list for multi-file transfers
-        if (fileCount > 1 && files && files.length) {
+        if (isMultiFile && files && files.length) {
           buildP2PFileList(files);
         }
 
@@ -246,9 +256,24 @@ async function start() {
         // Add click handler for download button
         elDownloadBtn.addEventListener('click', startDownload, { once: true });
       },
+      onFileStart: ({ name }) => {
+        // Start a new file entry in the ZIP writer (multi-file only)
+        if (zipWriter) {
+          zipWriter.startFile(name);
+        }
+      },
+      onFileEnd: () => {
+        // End the current file entry in the ZIP writer (multi-file only)
+        if (zipWriter) {
+          zipWriter.endFile();
+        }
+      },
       onData: async (chunk) => {
-        // Write chunk to file via streamSaver
-        if (writer) {
+        if (zipWriter) {
+          // Multi-file: write chunk through the ZIP writer (which pipes to StreamSaver)
+          zipWriter.writeChunk(chunk);
+        } else if (writer) {
+          // Single file: write directly to StreamSaver
           await writer.write(chunk);
         }
         received += chunk.byteLength;
@@ -264,7 +289,15 @@ async function start() {
         transferCompleted = true;
         resetTitleProgress();
 
-        // Close the writer
+        // Finalize ZIP if multi-file, then close the writer
+        if (zipWriter) {
+          try {
+            await zipWriter.finalize();
+          } catch (err) {
+            console.error('Error finalizing ZIP:', err);
+          }
+          zipWriter = null;
+        }
         if (writer) {
           try {
             await writer.close();
@@ -282,7 +315,7 @@ async function start() {
           title: 'Transfer Complete',
           message: 'Success!',
         });
-        elMeta.textContent = 'The file has been saved to your downloads.';
+        elMeta.textContent = `The ${isMultiFile ? `${fileCount} files have` : 'file has'} been saved to your downloads.`;
         elMeta.hidden = false;
         elFileDetails.style.display = 'none';
         elCancelBtn.style.display = 'none';

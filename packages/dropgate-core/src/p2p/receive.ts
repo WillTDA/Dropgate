@@ -79,6 +79,8 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     onMeta,
     onData,
     onProgress,
+    onFileStart,
+    onFileEnd,
     onComplete,
     onError,
     onDisconnect,
@@ -389,6 +391,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             if (fileList && typeof fi === 'number' && fi > 0) {
               currentFileReceived = 0;
               // Don't reset writeQueue or received - they accumulate
+              onFileStart?.({ fileIndex: fi, name, size: fileSize });
               break; // Already transferring, no need for ready signal
             }
 
@@ -406,6 +409,10 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               transitionTo('transferring');
               // Start watchdog once we're ready to receive data
               resetWatchdog();
+              // Notify consumer about first file start (for multi-file ZIP assembly)
+              if (fileList) {
+                onFileStart?.({ fileIndex: 0, name, size: fileSize });
+              }
               try {
                 conn.send({ t: 'ready' });
               } catch {
@@ -453,6 +460,8 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             await writeQueue;
 
             const feIdx = msg.fileIndex;
+            onFileEnd?.({ fileIndex: feIdx, receivedBytes: currentFileReceived });
+
             try {
               conn.send({ t: 'file_end_ack', fileIndex: feIdx, received: currentFileReceived, size: currentFileReceived });
             } catch {

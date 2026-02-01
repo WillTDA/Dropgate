@@ -715,12 +715,32 @@ export class DropgateClient {
         progress({ phase: 'complete', text: 'Finalising bundle...', percent: 100, processedBytes: totalSizeBytes, totalBytes: totalSizeBytes });
         uploadState = 'completing';
 
+        // For encrypted bundles, build and encrypt the manifest client-side.
+        // The server stores only the opaque blob and cannot read which files belong to the bundle.
+        let encryptedManifestB64: string | undefined;
+        if (effectiveEncrypt && cryptoKey) {
+          const manifest = JSON.stringify({
+            files: fileResults.map(r => ({
+              fileId: r.fileId,
+              name: r.name,
+              sizeBytes: r.size,
+            })),
+          });
+          const manifestBytes = new TextEncoder().encode(manifest);
+          const encryptedBlob = await encryptToBlob(this.cryptoObj, manifestBytes.buffer, cryptoKey);
+          const encryptedBuffer = new Uint8Array(await encryptedBlob.arrayBuffer());
+          encryptedManifestB64 = this.base64.encode(encryptedBuffer);
+        }
+
         const completeBundleRes = await fetchJson(this.fetchFn, `${baseUrl}/upload/complete-bundle`, {
           method: 'POST',
           timeoutMs: timeouts.completeMs ?? 30000,
           signal: effectiveSignal,
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ bundleUploadId }),
+          body: JSON.stringify({
+            bundleUploadId,
+            ...(encryptedManifestB64 ? { encryptedManifest: encryptedManifestB64 } : {}),
+          }),
         });
 
         if (!completeBundleRes.res.ok) {
@@ -922,7 +942,7 @@ export class DropgateClient {
     const isEncrypted = Boolean(bundleMeta.isEncrypted);
     const totalBytes = bundleMeta.totalSizeBytes || 0;
 
-    // Decrypt filenames if needed
+    // Decrypt filenames (and manifest for sealed bundles)
     let cryptoKey: CryptoKey | undefined;
     const filenames: string[] = [];
 
@@ -932,11 +952,33 @@ export class DropgateClient {
 
       try {
         cryptoKey = await importKeyFromBase64(this.cryptoObj, keyB64, this.base64);
-        for (const f of bundleMeta.files) {
-          filenames.push(await decryptFilenameFromBase64(this.cryptoObj, f.encryptedFilename!, cryptoKey, this.base64));
+
+        if (bundleMeta.sealed && bundleMeta.encryptedManifest) {
+          // Sealed bundle: decrypt the manifest to get the file list
+          const encryptedBytes = this.base64.decode(bundleMeta.encryptedManifest);
+          const decryptedBuffer = await decryptChunk(this.cryptoObj, encryptedBytes, cryptoKey);
+          const manifestJson = new TextDecoder().decode(decryptedBuffer);
+          const manifest = JSON.parse(manifestJson) as { files: Array<{ fileId: string; name: string; sizeBytes: number }> };
+
+          // Populate bundleMeta.files from the decrypted manifest
+          bundleMeta.files = manifest.files.map(f => ({
+            fileId: f.fileId,
+            sizeBytes: f.sizeBytes,
+            filename: f.name,
+          }));
+          bundleMeta.fileCount = bundleMeta.files.length;
+
+          for (const f of bundleMeta.files) {
+            filenames.push(f.filename || 'file');
+          }
+        } else {
+          // Non-sealed encrypted bundle: decrypt individual filenames
+          for (const f of bundleMeta.files) {
+            filenames.push(await decryptFilenameFromBase64(this.cryptoObj, f.encryptedFilename!, cryptoKey, this.base64));
+          }
         }
       } catch (err) {
-        throw new DropgateError('Failed to decrypt filenames.', { code: 'DECRYPT_FILENAME_FAILED', cause: err });
+        throw new DropgateError('Failed to decrypt bundle manifest.', { code: 'DECRYPT_MANIFEST_FAILED', cause: err });
       }
     } else {
       for (const f of bundleMeta.files) {

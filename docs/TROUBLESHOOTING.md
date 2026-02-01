@@ -29,9 +29,10 @@ Set `LOG_LEVEL=DEBUG` on the server, reproduce the issue once, then set it back.
 **Uploads are disabled / 404 on upload routes**
 - Make sure `ENABLE_UPLOAD=true`.
 
-**“File exceeds limit … MB” / “Chunk too large” / 413**
+**"File exceeds limit … MB" / "Total bundle size exceeds limit" / "Chunk too large" / 413**
 - Increase `UPLOAD_MAX_FILE_SIZE_MB`.
-- If you’re behind NGINX/Caddy/etc, also check your proxy’s upload/body size limit.
+- For multi-file uploads, the default behaviour (`UPLOAD_BUNDLE_SIZE_MODE=total`) enforces the size limit against the combined size of all files. Set it to `per-file` to check each file individually instead.
+- If you're behind NGINX/Caddy/etc, also check your proxy's upload/body size limit.
 
 **“Server out of capacity” / 507**
 - Increase `UPLOAD_MAX_STORAGE_GB` (or set `0` for unlimited), and/or free disk space.

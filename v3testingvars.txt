@@ -1,0 +1,7 @@
+process.env.ENABLE_UPLOAD = true;
+process.env.UPLOAD_ENABLE_E2EE = false;
+process.env.UPLOAD_MAX_FILE_SIZE_MB = 100000;
+process.env.UPLOAD_CHUNK_SIZE_BYTES = 1048576;
+process.env.LOG_LEVEL = 'DEBUG';
+process.env.PEERJS_DEBUG = true;
+process.env.UPLOAD_PRESERVE_UPLOADS = true;

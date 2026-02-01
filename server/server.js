@@ -1,8 +1,3 @@
-process.env.ENABLE_UPLOAD = process.env.ENABLE_UPLOAD || 'true';
-process.env.UPLOAD_ENABLE_E2EE = true;
-process.env.UPLOAD_MAX_FILE_SIZE_MB = 100000;
-process.env.UPLOAD_CHUNK_SIZE_BYTES = 1048576;
-
 const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
 const normalizeLogLevel = (value) => {
     const upper = String(value || '').trim().toUpperCase();
@@ -196,6 +191,16 @@ if (enableUpload) {
     if (maxFileSizeMB === 0) {
         log('warn', 'UPLOAD_MAX_FILE_SIZE_MB is set to 0! Files of any size can be uploaded.');
     }
+
+    // Bundle size mode: 'total' means UPLOAD_MAX_FILE_SIZE_MB applies to the total bundle size,
+    // 'per-file' means it applies to each individual file. Default is 'total'.
+    const bundleSizeModeRaw = (process.env.UPLOAD_BUNDLE_SIZE_MODE || 'total').trim().toLowerCase();
+    if (bundleSizeModeRaw !== 'total' && bundleSizeModeRaw !== 'per-file') {
+        log('error', "Invalid UPLOAD_BUNDLE_SIZE_MODE. Must be 'total' or 'per-file'.");
+        process.exit(1);
+    }
+    var bundleSizeMode = bundleSizeModeRaw;
+    log('info', `UPLOAD_BUNDLE_SIZE_MODE: ${bundleSizeMode}`);
 
     maxStorageGB = parseEnvNumber('UPLOAD_MAX_STORAGE_GB', process.env.UPLOAD_MAX_STORAGE_GB, 10);
     MAX_STORAGE_BYTES = maxStorageGB === 0 ? Infinity : maxStorageGB * 1000 * 1000 * 1000;
@@ -548,7 +553,8 @@ if (enableUpload) {
             if (!Number.isInteger(chunks) || chunks <= 0) {
                 return res.status(400).json({ error: `Invalid totalChunks for file at index ${i}.` });
             }
-            if (size > MAX_FILE_SIZE_BYTES) {
+            // In per-file mode, each file is checked individually against the limit
+            if (bundleSizeMode === 'per-file' && size > MAX_FILE_SIZE_BYTES) {
                 return res.status(413).json({ error: `File at index ${i} exceeds limit of ${maxFileSizeMB} MB.` });
             }
             if (!isEncrypted) {
@@ -562,6 +568,11 @@ if (enableUpload) {
             fileEntries.push({ uploadId, filename: f.filename, totalSize: size, totalChunks: chunks });
         }
 
+        // In total mode, check the combined bundle size against the limit
+        if (bundleSizeMode === 'total' && totalBundleSize > MAX_FILE_SIZE_BYTES) {
+            return res.status(413).json({ error: `Total bundle size exceeds limit of ${maxFileSizeMB} MB.` });
+        }
+
         // Check storage quota for the entire bundle
         let reservedSpace = 0;
         ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
@@ -570,6 +581,10 @@ if (enableUpload) {
         }
 
         // Create individual upload sessions for each file
+        // For sealed (encrypted) bundles, individual files get unlimited downloads
+        // since their lifecycle is time-based and the bundle manifest controls discoverability.
+        const perFileMaxDownloads = isEncrypted ? 0 : effectiveMaxDownloads;
+
         for (const entry of fileEntries) {
             const tempFilePath = path.join(tmpDir, entry.uploadId);
             fs.writeFileSync(tempFilePath, '');
@@ -577,7 +592,7 @@ if (enableUpload) {
                 filename: entry.filename,
                 isEncrypted,
                 lifetime: Number(lifetime) || 0,
-                maxDownloads: effectiveMaxDownloads,
+                maxDownloads: perFileMaxDownloads,
                 tempFilePath,
                 totalSize: entry.totalSize,
                 totalChunks: entry.totalChunks,
@@ -593,6 +608,7 @@ if (enableUpload) {
             fileUploadIds,
             fileCount,
             isEncrypted,
+            sealedManifest: isEncrypted, // Encrypted bundles use sealed (opaque) manifests
             lifetime: Number(lifetime) || 0,
             maxDownloads: effectiveMaxDownloads,
             completedFiles: new Set(),
@@ -675,6 +691,22 @@ if (enableUpload) {
 
                     session.receivedChunks.add(chunkIndex);
                     session.expiresAt = Date.now() + (2 * 60 * 1000); // Reset timeout to 2 mins
+
+                    // If this file belongs to a bundle, refresh all sibling upload sessions
+                    // so they don't get zombie-cleaned while waiting their turn.
+                    if (session.bundleUploadId) {
+                        const bundleSession = ongoingBundles.get(session.bundleUploadId);
+                        if (bundleSession) {
+                            const refreshedAt = Date.now() + (2 * 60 * 1000);
+                            for (const siblingId of bundleSession.fileUploadIds) {
+                                const sibling = ongoingUploads.get(siblingId);
+                                if (sibling && sibling !== session) {
+                                    sibling.expiresAt = refreshedAt;
+                                }
+                            }
+                        }
+                    }
+
                     res.status(200).send('Chunk received.');
                 });
             });
@@ -737,11 +769,16 @@ if (enableUpload) {
             downloadCount: 0,
         };
 
-        // If this file belongs to a bundle, tag it and track completion
+        // If this file belongs to a bundle, track completion
         if (uploadInfo.bundleUploadId) {
-            fileRecord.bundleId = 'pending'; // Will be set to actual bundleId on complete-bundle
             const bundleSession = ongoingBundles.get(uploadInfo.bundleUploadId);
             if (bundleSession) {
+                // For sealed (encrypted) bundles, files are independent - no bundleId tag.
+                // For unsealed bundles, tag the file so the server can manage lifecycle.
+                if (!bundleSession.sealedManifest) {
+                    fileRecord.bundleId = 'pending'; // Will be set to actual bundleId on complete-bundle
+                }
+
                 bundleSession.completedFiles.add(uploadId);
                 bundleSession.completedFileResults.push({
                     fileId,
@@ -761,7 +798,7 @@ if (enableUpload) {
     });
 
     uploadRouter.post('/complete-bundle', limiter, (req, res) => {
-        const { bundleUploadId } = req.body;
+        const { bundleUploadId, encryptedManifest } = req.body;
         if (!bundleUploadId || !ongoingBundles.has(bundleUploadId)) {
             return res.status(400).json({ error: 'Invalid bundle upload ID.' });
         }
@@ -775,39 +812,69 @@ if (enableUpload) {
             });
         }
 
+        // For sealed (encrypted) bundles, the client must provide an encrypted manifest.
+        if (bundleSession.sealedManifest) {
+            if (typeof encryptedManifest !== 'string' || encryptedManifest.length === 0) {
+                return res.status(400).json({ error: 'Encrypted manifest is required for E2EE bundles.' });
+            }
+            // Enforce a reasonable size limit on the manifest blob (1MB)
+            if (encryptedManifest.length > 1024 * 1024) {
+                return res.status(413).json({ error: 'Encrypted manifest is too large.' });
+            }
+        }
+
         const bundleId = uuidv4();
 
-        // Calculate total size and build file list
+        // Calculate total size
         let totalSizeBytes = 0;
-        const bundleFiles = [];
         for (const result of bundleSession.completedFileResults) {
             totalSizeBytes += result.sizeBytes;
-            bundleFiles.push({
-                fileId: result.fileId,
-                name: result.name,
-                sizeBytes: result.sizeBytes,
-            });
-
-            // Update the file record with the actual bundleId
-            const fileRecord = fileDatabase.get(result.fileId);
-            if (fileRecord) {
-                fileDatabase.set(result.fileId, { ...fileRecord, bundleId });
-            }
         }
 
         const expiresAt = bundleSession.lifetime > 0 ? Date.now() + bundleSession.lifetime : null;
 
-        bundleDatabase.set(bundleId, {
-            files: bundleFiles,
-            isEncrypted: bundleSession.isEncrypted,
-            expiresAt,
-            maxDownloads: bundleSession.maxDownloads,
-            downloadCount: 0,
-            totalSizeBytes,
-        });
+        if (bundleSession.sealedManifest) {
+            // Sealed bundle: store only the encrypted manifest blob.
+            // The server cannot read the file list - only the downloader with the key can.
+            bundleDatabase.set(bundleId, {
+                encryptedManifest,
+                isEncrypted: true,
+                sealed: true,
+                expiresAt,
+                maxDownloads: bundleSession.maxDownloads,
+                downloadCount: 0,
+                totalSizeBytes,
+                fileCount: bundleSession.fileCount,
+            });
+        } else {
+            // Unsealed bundle: build and store plaintext file list (existing behavior)
+            const bundleFiles = [];
+            for (const result of bundleSession.completedFileResults) {
+                bundleFiles.push({
+                    fileId: result.fileId,
+                    name: result.name,
+                    sizeBytes: result.sizeBytes,
+                });
+
+                // Update the file record with the actual bundleId
+                const fileRecord = fileDatabase.get(result.fileId);
+                if (fileRecord) {
+                    fileDatabase.set(result.fileId, { ...fileRecord, bundleId });
+                }
+            }
+
+            bundleDatabase.set(bundleId, {
+                files: bundleFiles,
+                isEncrypted: bundleSession.isEncrypted,
+                expiresAt,
+                maxDownloads: bundleSession.maxDownloads,
+                downloadCount: 0,
+                totalSizeBytes,
+            });
+        }
 
         ongoingBundles.delete(bundleUploadId);
-        log('debug', `Bundle created (${bundleFiles.length} files, ${(totalSizeBytes / 1000 / 1000).toFixed(2)} MB total).`);
+        log('debug', `Bundle created${bundleSession.sealedManifest ? ' (sealed)' : ''} (${bundleSession.fileCount} files, ${(totalSizeBytes / 1000 / 1000).toFixed(2)} MB total).`);
         res.status(200).json({ bundleId });
     });
 
@@ -913,6 +980,19 @@ if (enableUpload) {
             return res.status(404).json({ error: 'Bundle not found.' });
         }
 
+        // Sealed bundles return only the encrypted manifest blob.
+        // The server cannot read the file list - the client must decrypt it.
+        if (bundleInfo.sealed) {
+            return res.status(200).json({
+                isEncrypted: true,
+                sealed: true,
+                encryptedManifest: bundleInfo.encryptedManifest,
+                totalSizeBytes: bundleInfo.totalSizeBytes,
+                fileCount: bundleInfo.fileCount,
+            });
+        }
+
+        // Unsealed bundles return the structured file list
         const payload = {
             isEncrypted: bundleInfo.isEncrypted,
             totalSizeBytes: bundleInfo.totalSizeBytes,
@@ -943,20 +1023,27 @@ if (enableUpload) {
         const maxDl = bundleInfo.maxDownloads ?? 1;
 
         if (maxDl > 0 && newDownloadCount >= maxDl) {
-            // Delete all bundle files and the bundle record
-            for (const f of bundleInfo.files) {
-                const fileInfo = fileDatabase.get(f.fileId);
-                if (fileInfo) {
-                    try {
-                        const stats = fs.statSync(fileInfo.path);
-                        currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
-                    } catch (e) { }
-                    fs.rm(fileInfo.path, { force: true }, () => { });
-                    fileDatabase.delete(f.fileId);
+            if (bundleInfo.sealed) {
+                // Sealed bundle: only delete the manifest record.
+                // Individual files are independent and expire on their own.
+                bundleDatabase.delete(bundleId);
+                log('debug', `Sealed bundle manifest deleted (${newDownloadCount}/${maxDl} downloads). Member files will expire independently.`);
+            } else {
+                // Unsealed bundle: delete all member files and the bundle record
+                for (const f of bundleInfo.files) {
+                    const fileInfo = fileDatabase.get(f.fileId);
+                    if (fileInfo) {
+                        try {
+                            const stats = fs.statSync(fileInfo.path);
+                            currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+                        } catch (e) { }
+                        fs.rm(fileInfo.path, { force: true }, () => { });
+                        fileDatabase.delete(f.fileId);
+                    }
                 }
+                bundleDatabase.delete(bundleId);
+                log('debug', `Bundle downloaded and deleted (${newDownloadCount}/${maxDl} downloads).`);
             }
-            bundleDatabase.delete(bundleId);
-            log('debug', `Bundle downloaded and deleted (${newDownloadCount}/${maxDl} downloads).`);
         } else {
             bundleDatabase.set(bundleId, { ...bundleInfo, downloadCount: newDownloadCount });
             log('debug', `Bundle downloaded (${newDownloadCount}/${maxDl === 0 ? 'unlimited' : maxDl} downloads).`);
@@ -970,6 +1057,7 @@ apiRouter.get('/info', limiter, (req, res) => {
     const uploadCapabilities = {
         enabled: enableUpload,
         maxSizeMB: enableUpload ? maxFileSizeMB : undefined,
+        bundleSizeMode: enableUpload ? bundleSizeMode : undefined,
         maxLifetimeHours: enableUpload ? maxFileLifetimeHours : undefined,
         maxFileDownloads: enableUpload ? maxFileDownloads : undefined,
         e2ee: enableUpload ? uploadEnableE2EE : undefined,
@@ -1187,16 +1275,23 @@ if (enableUpload) {
         const allBundles = preserveUploads ? bundleDatabase.getAll() : Array.from(bundleDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
         for (const record of allBundles) {
             if (record.value?.expiresAt && record.value.expiresAt < now) {
-                log('debug', `Bundle expired. Deleting ${record.value.files?.length || 0} member files...`);
-                for (const f of (record.value.files || [])) {
-                    const fileInfo = fileDatabase.get(f.fileId);
-                    if (fileInfo) {
-                        try {
-                            const stats = fs.statSync(fileInfo.path);
-                            currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
-                            fs.rmSync(fileInfo.path, { force: true });
-                        } catch (e) { }
-                        fileDatabase.delete(f.fileId);
+                if (record.value.sealed) {
+                    // Sealed bundle: just delete the manifest record.
+                    // Member files are independent and handled by the file cleanup above.
+                    log('debug', 'Sealed bundle manifest expired. Deleting manifest record...');
+                } else {
+                    // Unsealed bundle: delete member files
+                    log('debug', `Bundle expired. Deleting ${record.value.files?.length || 0} member files...`);
+                    for (const f of (record.value.files || [])) {
+                        const fileInfo = fileDatabase.get(f.fileId);
+                        if (fileInfo) {
+                            try {
+                                const stats = fs.statSync(fileInfo.path);
+                                currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+                                fs.rmSync(fileInfo.path, { force: true });
+                            } catch (e) { }
+                            fileDatabase.delete(f.fileId);
+                        }
                     }
                 }
                 bundleDatabase.delete(record.key);
@@ -1208,6 +1303,10 @@ if (enableUpload) {
         const now = Date.now();
         for (const [id, session] of ongoingUploads.entries()) {
             if (now > session.expiresAt) {
+                // Skip uploads whose parent bundle session is still alive —
+                // the bundle zombie cleanup handles them as a group.
+                if (session.bundleUploadId && ongoingBundles.has(session.bundleUploadId)) continue;
+
                 log('debug', 'Cleaning zombie upload.');
                 try {
                     fs.rmSync(session.tempFilePath, { force: true });

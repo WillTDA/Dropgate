@@ -314,6 +314,10 @@ export interface P2PReceiveOptions extends P2PServerConfig {
   onData?: (chunk: Uint8Array) => Promise<void> | void;
   /** Callback for progress updates. */
   onProgress?: (evt: P2PReceiveProgressEvent) => void;
+  /** Callback when an individual file starts in a multi-file transfer. */
+  onFileStart?: (evt: { fileIndex: number; name: string; size: number }) => void;
+  /** Callback when an individual file ends in a multi-file transfer. */
+  onFileEnd?: (evt: { fileIndex: number; receivedBytes: number }) => void;
   /** Callback when transfer completes. */
   onComplete?: (evt: P2PReceiveCompleteEvent) => void;
   /** Callback on error. */
@@ -431,6 +435,10 @@ export interface P2PReceiveFileOptions {
   onData?: (chunk: Uint8Array) => Promise<void> | void;
   /** Callback for progress updates. */
   onProgress?: (evt: P2PReceiveProgressEvent) => void;
+  /** Callback when an individual file starts in a multi-file transfer. */
+  onFileStart?: (evt: { fileIndex: number; name: string; size: number }) => void;
+  /** Callback when an individual file ends in a multi-file transfer. */
+  onFileEnd?: (evt: { fileIndex: number; receivedBytes: number }) => void;
   /** Callback when transfer completes. */
   onComplete?: (evt: P2PReceiveCompleteEvent) => void;
   /** Callback on error. */

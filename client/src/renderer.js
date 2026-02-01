@@ -362,22 +362,22 @@ document.addEventListener('DOMContentLoaded', async () => {
             for (let i = 0; i < selectedFiles.length; i++) {
                 const f = selectedFiles[i];
                 const li = document.createElement('li');
-                li.className = 'd-flex align-items-center small mb-1';
+                li.className = 'd-flex align-items-center small file-list-item';
                 const nameSpan = document.createElement('span');
                 nameSpan.className = 'text-truncate me-2';
                 nameSpan.textContent = f.name;
                 nameSpan.title = f.name;
                 const rightSide = document.createElement('span');
-                rightSide.className = 'd-flex align-items-center gap-1 flex-shrink-0 ms-auto';
+                rightSide.className = 'd-flex align-items-center gap-2 flex-shrink-0 ms-auto';
                 const sizeSpan = document.createElement('span');
                 sizeSpan.className = 'text-body-secondary';
                 sizeSpan.textContent = formatBytes(f.size);
                 rightSide.appendChild(sizeSpan);
                 const removeBtn = document.createElement('button');
                 removeBtn.type = 'button';
-                removeBtn.className = 'btn btn-sm p-0 border-0 text-body-secondary';
+                removeBtn.className = 'file-remove-btn';
                 removeBtn.title = 'Remove file';
-                removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 16px; vertical-align: middle;">close</span>';
+                removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 14px;">close</span>';
                 removeBtn.addEventListener('click', (e) => {
                     e.stopPropagation();
                     selectedFiles.splice(i, 1);
@@ -461,7 +461,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     encrypt: encrypt,
                     onProgress: (evt) => {
                         const payload = {};
-                        if (evt?.text) payload.text = evt.text;
+                        if (evt?.text) {
+                            payload.text = evt.currentFileName
+                                ? `${evt.text} — ${evt.currentFileName}`
+                                : evt.text;
+                        }
                         if (evt?.percent !== undefined) payload.percent = evt.percent;
                         if (Object.keys(payload).length) window.electronAPI.uploadProgress(payload);
                     },
@@ -849,12 +853,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // Update max single file size hint
+            // Update size limit hint based on bundle size mode
             const maxSizeBytes = serverCapabilities.upload.maxSizeMB * 1000 * 1000;
+            const sizeMode = serverCapabilities.upload.bundleSizeMode || 'total';
+            const sizeLabel = sizeMode === 'per-file' ? 'Max single file size' : 'Max upload size';
             if (maxSizeBytes === 0) {
                 maxUploadHint.textContent = 'You can upload files of any size.';
             } else {
-                maxUploadHint.textContent = `Max single file size: ${formatBytes(maxSizeBytes)}.`;
+                maxUploadHint.textContent = `${sizeLabel}: ${formatBytes(maxSizeBytes)}.`;
             }
 
             // Update Security Status UI (Auto-managed E2EE)
