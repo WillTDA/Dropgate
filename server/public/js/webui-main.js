@@ -91,6 +91,7 @@ const state = {
   maxSizeMB: null,
   maxLifetimeHours: null,
   maxFileDownloads: 1,
+  bundleSizeMode: 'total',
   e2ee: false,
   peerjsPath: '/peerjs',
   iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }],
