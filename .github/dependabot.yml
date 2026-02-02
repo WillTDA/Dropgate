@@ -6,6 +6,9 @@
 version: 2
 updates:
   - package-ecosystem: "npm" # See documentation for possible values
-    directory: "/" # Location of package manifests
+    directories:
+      - "/client"
+      - "/server"
+      - "/packages/dropgate-core"
     schedule:
       interval: "monthly"
