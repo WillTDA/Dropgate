@@ -73,8 +73,8 @@
   "author": "Diamond Digital Development <https://diamonddigital.dev>",
   "license": "GPL-3.0-only",
   "devDependencies": {
-    "electron": "^40.0.0",
-    "electron-builder": "^26.0.12"
+    "electron": "^40.1.0",
+    "electron-builder": "^26.7.0"
   },
   "dependencies": {
     "bootstrap": "^5.3.8",
