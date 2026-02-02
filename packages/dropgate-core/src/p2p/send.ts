@@ -186,6 +186,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   };
 
   const reportProgress = (data: { received: number; total: number }): void => {
+    if (isStopped()) return;
     const safeTotal =
       Number.isFinite(data.total) && data.total > 0 ? data.total : totalSize;
     const safeReceived = Math.min(Number(data.received) || 0, safeTotal || 0);
@@ -263,6 +264,12 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   const stop = (): void => {
     if (state === 'closed' || state === 'cancelled') return;
 
+    // If already completed, just cleanup without callbacks
+    if (state === 'completed') {
+      cleanup();
+      return;
+    }
+
     const wasActive = state === 'transferring' || state === 'finishing' || state === 'awaiting_ack';
     transitionTo('cancelled');
 
@@ -292,6 +299,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     if (!onConnectionHealth) return;
 
     healthCheckTimer = setInterval(() => {
+      if (isStopped()) return;
       const dc = conn._dc;
       if (!dc) return;
 
@@ -402,7 +410,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   };
 
   peer.on('connection', (conn: DataConnection) => {
-    if (state === 'closed') return;
+    if (isStopped()) return;
 
     // Connection replacement logic - allow new connections if old one is dead
     if (activeConn) {
@@ -455,7 +463,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
 
     activeConn = conn;
     transitionTo('handshaking');
-    onStatus?.({ phase: 'connected', message: 'Receiver connected.' });
+    if (!isStopped()) onStatus?.({ phase: 'connected', message: 'Receiver connected.' });
     lastActivityTime = Date.now();
 
     let helloResolve: ((version: number) => void) | null = null;
@@ -493,7 +501,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
           break;
 
         case 'ready':
-          onStatus?.({ phase: 'transferring', message: 'Receiver accepted. Starting transfer...' });
+          if (!isStopped()) onStatus?.({ phase: 'transferring', message: 'Receiver accepted. Starting transfer...' });
           readyResolve?.();
           break;
 
@@ -557,7 +565,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
         }
 
         transitionTo('negotiating');
-        onStatus?.({ phase: 'waiting', message: 'Connected. Waiting for receiver to accept...' });
+        if (!isStopped()) onStatus?.({ phase: 'waiting', message: 'Connected. Waiting for receiver to accept...' });
 
         // v3: Send file_list for multi-file transfers
         if (isMultiFile) {

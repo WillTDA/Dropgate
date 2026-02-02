@@ -156,6 +156,9 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     return true;
   };
 
+  // Helper to check if session is stopped
+  const isStopped = (): boolean => state === 'closed' || state === 'cancelled';
+
   // Watchdog - detects dead connections during transfer
   const resetWatchdog = (): void => {
     if (watchdogTimeoutMs <= 0) return;
@@ -229,6 +232,12 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
   const stop = (): void => {
     if (state === 'closed' || state === 'cancelled') return;
+
+    // If already completed, just cleanup without callbacks
+    if (state === 'completed') {
+      cleanup();
+      return;
+    }
 
     const wasActive = state === 'transferring';
     transitionTo('cancelled');
@@ -322,7 +331,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               const progressReceived = fileList ? (totalReceivedAllFiles + currentFileReceived) : received;
               const progressTotal = fileList ? fileList.totalSize : total;
               const percent = progressTotal ? Math.min(100, (progressReceived / progressTotal) * 100) : 0;
-              onProgress?.({ processedBytes: progressReceived, totalBytes: progressTotal, percent });
+              if (!isStopped()) onProgress?.({ processedBytes: progressReceived, totalBytes: progressTotal, percent });
 
               // Send chunk acknowledgment
               if (chunkSeq >= 0) {
@@ -429,14 +438,18 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             }
 
             if (autoReady) {
-              onMeta?.(metaEvt);
-              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              if (!isStopped()) {
+                onMeta?.(metaEvt);
+                onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              }
               sendReady();
             } else {
               // Pass sendReady function to callback so consumer can trigger transfer start
               metaEvt.sendReady = sendReady;
-              onMeta?.(metaEvt);
-              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              if (!isStopped()) {
+                onMeta?.(metaEvt);
+                onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              }
             }
             break;
           }

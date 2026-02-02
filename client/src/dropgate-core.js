@@ -1164,6 +1164,7 @@ async function startP2PSend(opts) {
     return true;
   };
   const reportProgress = (data) => {
+    if (isStopped()) return;
     const safeTotal = Number.isFinite(data.total) && data.total > 0 ? data.total : totalSize;
     const safeReceived = Math.min(Number(data.received) || 0, safeTotal || 0);
     const percent = safeTotal ? safeReceived / safeTotal * 100 : 0;
@@ -1217,6 +1218,10 @@ async function startP2PSend(opts) {
   }
   const stop = () => {
     if (state === "closed" || state === "cancelled") return;
+    if (state === "completed") {
+      cleanup();
+      return;
+    }
     const wasActive = state === "transferring" || state === "finishing" || state === "awaiting_ack";
     transitionTo("cancelled");
     try {
@@ -1234,6 +1239,7 @@ async function startP2PSend(opts) {
   const startHealthMonitoring = (conn) => {
     if (!onConnectionHealth) return;
     healthCheckTimer = setInterval(() => {
+      if (isStopped()) return;
       const dc = conn._dc;
       if (!dc) return;
       const health = {
@@ -1314,7 +1320,7 @@ async function startP2PSend(opts) {
     throw new DropgateNetworkError("Receiver did not confirm completion after retries.");
   };
   peer.on("connection", (conn) => {
-    if (state === "closed") return;
+    if (isStopped()) return;
     if (activeConn) {
       const isOldConnOpen = activeConn.open !== false;
       if (isOldConnOpen && state === "transferring") {
@@ -1351,7 +1357,7 @@ async function startP2PSend(opts) {
     }
     activeConn = conn;
     transitionTo("handshaking");
-    onStatus?.({ phase: "connected", message: "Receiver connected." });
+    if (!isStopped()) onStatus?.({ phase: "connected", message: "Receiver connected." });
     lastActivityTime = Date.now();
     let helloResolve = null;
     let readyResolve = null;
@@ -1378,7 +1384,7 @@ async function startP2PSend(opts) {
           helloResolve?.(msg.protocolVersion);
           break;
         case "ready":
-          onStatus?.({ phase: "transferring", message: "Receiver accepted. Starting transfer..." });
+          if (!isStopped()) onStatus?.({ phase: "transferring", message: "Receiver accepted. Starting transfer..." });
           readyResolve?.();
           break;
         case "chunk_ack":
@@ -1425,7 +1431,7 @@ async function startP2PSend(opts) {
           );
         }
         transitionTo("negotiating");
-        onStatus?.({ phase: "waiting", message: "Connected. Waiting for receiver to accept..." });
+        if (!isStopped()) onStatus?.({ phase: "waiting", message: "Connected. Waiting for receiver to accept..." });
         if (isMultiFile) {
           conn.send({
             t: "file_list",
@@ -1641,6 +1647,7 @@ async function startP2PReceive(opts) {
     state = newState;
     return true;
   };
+  const isStopped = () => state === "closed" || state === "cancelled";
   const resetWatchdog = () => {
     if (watchdogTimeoutMs <= 0) return;
     if (watchdogTimer) {
@@ -1691,6 +1698,10 @@ async function startP2PReceive(opts) {
   }
   const stop = () => {
     if (state === "closed" || state === "cancelled") return;
+    if (state === "completed") {
+      cleanup();
+      return;
+    }
     const wasActive = state === "transferring";
     transitionTo("cancelled");
     try {
@@ -1754,7 +1765,7 @@ async function startP2PReceive(opts) {
             const progressReceived = fileList ? totalReceivedAllFiles + currentFileReceived : received;
             const progressTotal = fileList ? fileList.totalSize : total;
             const percent = progressTotal ? Math.min(100, progressReceived / progressTotal * 100) : 0;
-            onProgress?.({ processedBytes: progressReceived, totalBytes: progressTotal, percent });
+            if (!isStopped()) onProgress?.({ processedBytes: progressReceived, totalBytes: progressTotal, percent });
             if (chunkSeq >= 0) {
               sendChunkAck(conn, chunkSeq);
             }
@@ -1829,13 +1840,17 @@ async function startP2PReceive(opts) {
               metaEvt.totalSize = fileList.totalSize;
             }
             if (autoReady) {
-              onMeta?.(metaEvt);
-              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              if (!isStopped()) {
+                onMeta?.(metaEvt);
+                onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              }
               sendReady();
             } else {
               metaEvt.sendReady = sendReady;
-              onMeta?.(metaEvt);
-              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              if (!isStopped()) {
+                onMeta?.(metaEvt);
+                onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              }
             }
             break;
           }

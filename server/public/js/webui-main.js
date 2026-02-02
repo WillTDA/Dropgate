@@ -915,7 +915,6 @@ async function startP2PSendFlow() {
     file,
     Peer,
     onCode: (id) => {
-      if (!state.p2pSession) return; // Session stopped, ignore callback
       showPanels('p2pwait');
       // Reset visibility of share elements for new session
       setHidden(els.p2pCode, false);
@@ -933,7 +932,6 @@ async function startP2PSendFlow() {
       els.p2pLink.value = link;
     },
     onStatus: ({ phase, message }) => {
-      if (!state.p2pSession) return; // Session stopped, ignore callback
       if (phase === 'waiting') {
         // Update p2pWaitCard title/subtitle to show waiting status
         const waitTitle = els.p2pWaitCard?.querySelector('h5');
@@ -957,7 +955,6 @@ async function startP2PSendFlow() {
       }
     },
     onProgress: ({ processedBytes, totalBytes, percent }) => {
-      if (!state.p2pSession) return; // Session stopped, ignore callback
       // Update title and store progress for visibility handler
       updateTitleProgress(percent);
       currentTransferProgress = {

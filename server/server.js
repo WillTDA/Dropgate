@@ -1,11 +1,3 @@
-process.env.ENABLE_UPLOAD = true;
-process.env.UPLOAD_ENABLE_E2EE = true;
-process.env.UPLOAD_MAX_FILE_SIZE_MB = 100000;
-process.env.UPLOAD_CHUNK_SIZE_BYTES = 1048576;
-process.env.LOG_LEVEL = 'DEBUG';
-process.env.PEERJS_DEBUG = true;
-process.env.UPLOAD_PRESERVE_UPLOADS = true;
-
 const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
 const normalizeLogLevel = (value) => {
     const upper = String(value || '').trim().toUpperCase();
