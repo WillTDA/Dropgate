@@ -58,7 +58,7 @@ Dropgate was built to make **secure file sharing accessible**, **transparent**, 
 ├── server/    # Node.js server + Web UI (AGPL-3.0)
 ├── packages/
 │   ├── dropgate-core/      # Shared TypeScript library (Apache-2.0)
-├── docs/      # Privacy and troubleshooting notes
+├── docs/      # Privacy, troubleshooting, and technical notes
 ```
 
 
@@ -95,6 +95,7 @@ If you self-host, you decide how strict you want to be — from private-only to 
 
 - [`docs/PRIVACY.md`](./docs/PRIVACY.md)
 - [`docs/TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md)
+- [`Technical Documentation`](./docs/technical/README.md)
 
 
 ## 📜 Licenses
