@@ -105,7 +105,7 @@ async function startDownload() {
         progressBar.style.width = `${percent}%`;
         progressText.textContent = `${formatBytes(processedBytes)} / ${formatBytes(totalBytes)}`;
         statusMessage.textContent = totalBytes
-          ? `Streaming directly to file... (${percent}%)`
+          ? `Streaming directly to file... (${Math.round(percent)}%)`
           : `Streaming directly to file... (${formatBytes(processedBytes)})`;
       },
       onData: async (chunk) => {

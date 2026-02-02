@@ -614,6 +614,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 uploadStatus.textContent = message;
                 uploadStatus.className = 'form-text mt-1 text-warning';
                 uploadBtn.disabled = true;
+                updateUploadabilityState(false, message);
                 lastServerCheck = { compatible: false, message };
                 return lastServerCheck;
             }
