@@ -1,3 +1,11 @@
+process.env.ENABLE_UPLOAD = true;
+process.env.UPLOAD_ENABLE_E2EE = true;
+process.env.UPLOAD_MAX_FILE_SIZE_MB = 100000;
+process.env.UPLOAD_CHUNK_SIZE_BYTES = 1048576;
+process.env.LOG_LEVEL = 'DEBUG';
+process.env.PEERJS_DEBUG = true;
+process.env.UPLOAD_PRESERVE_UPLOADS = true;
+
 const LOG_LEVELS = { NONE: -1, ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3 };
 const normalizeLogLevel = (value) => {
     const upper = String(value || '').trim().toUpperCase();
@@ -41,7 +49,7 @@ const helmet = require('helmet').default;
 const cors = require('cors');
 const { ExpressPeerServer } = require('peer');
 const contentDisposition = require('content-disposition');
-const { FSDB } = require('file-system-db');
+const { QuickDB, MemoryDriver } = require('quick.db');
 const { v4: uuidv4 } = require('uuid');
 
 const port = process.env.SERVER_PORT || 52443;
@@ -242,6 +250,9 @@ if (enableUpload) {
 
     createDirIfNotExists(uploadDir);
     createDirIfNotExists(tmpDir);
+    if (preserveUploads) {
+        createDirIfNotExists(path.join(__dirname, 'uploads', 'db'));
+    }
 
     currentDiskUsage = getDirSize(uploadDir);
     setInterval(() => { currentDiskUsage = getDirSize(uploadDir); }, 300000); // Sync every 5 minutes in case of discrepancies
@@ -249,8 +260,8 @@ if (enableUpload) {
         log('info', `Current server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB`);
     }
 
-    fileDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'file-database.json')) : new Map();
-    bundleDatabase = preserveUploads ? new FSDB(path.join(__dirname, 'uploads', 'db', 'bundle-database.json')) : new Map();
+    fileDatabase = preserveUploads ? new QuickDB({ filePath: path.join(__dirname, 'uploads', 'db', 'file-database.sqlite') }) : new QuickDB({ driver: new MemoryDriver() });
+    bundleDatabase = preserveUploads ? new QuickDB({ filePath: path.join(__dirname, 'uploads', 'db', 'bundle-database.sqlite') }) : new QuickDB({ driver: new MemoryDriver() });
     ongoingUploads = new Map();
     ongoingBundles = new Map();
     log('info', `File database is ready. (${preserveUploads ? 'persistent' : 'in-memory'})`);
@@ -279,6 +290,7 @@ app.use(
     helmet({
         hsts: false, // HSTS should be handled by the reverse proxy
         crossOriginOpenerPolicy: { policy: 'same-origin' },
+        crossOriginResourcePolicy: { policy: 'same-origin' },
         contentSecurityPolicy: {
             directives: {
                 ...helmet.contentSecurityPolicy.getDefaultDirectives(),
@@ -293,10 +305,19 @@ app.use(
                 'form-action': ["'self'"],
                 'object-src': ["'none'"],
                 'frame-ancestors': ["'self'"],
+                'font-src': ["'self'"],
+                'media-src': ["'none'"],
             },
         },
+        permittedCrossDomainPolicies: { permittedPolicies: 'none' }, // Block Flash/PDF cross-domain access
     })
 );
+
+// Disable unnecessary browser features via Permissions-Policy.
+app.use((req, res, next) => {
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=(), autoplay=(), fullscreen=(self)');
+    next();
+});
 
 // Static assets (after Helmet so headers apply)
 app.use(express.static(path.join(__dirname, 'public')));
@@ -713,7 +734,7 @@ if (enableUpload) {
         });
     });
 
-    uploadRouter.post('/complete', uploadAuth, (req, res) => {
+    uploadRouter.post('/complete', uploadAuth, async (req, res) => {
         const { uploadId } = req.body;
         if (!ongoingUploads.has(uploadId)) return res.status(400).json({ error: 'Invalid upload ID.' });
 
@@ -766,8 +787,12 @@ if (enableUpload) {
             expiresAt: expiresAt,
             isEncrypted: uploadInfo.isEncrypted,
             maxDownloads: uploadInfo.maxDownloads,
-            downloadCount: 0,
         };
+
+        // Only track download count when there's a limit (not unlimited)
+        if (uploadInfo.maxDownloads > 0) {
+            fileRecord.downloadCount = 0;
+        }
 
         // If this file belongs to a bundle, track completion
         if (uploadInfo.bundleUploadId) {
@@ -790,14 +815,14 @@ if (enableUpload) {
             }
         }
 
-        fileDatabase.set(fileId, fileRecord);
+        await fileDatabase.set(fileId, fileRecord);
 
         ongoingUploads.delete(uploadId); // Remove the reservation
         log('debug', `[${uploadInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File received.${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
         res.status(200).json({ id: fileId });
     });
 
-    uploadRouter.post('/complete-bundle', limiter, (req, res) => {
+    uploadRouter.post('/complete-bundle', limiter, async (req, res) => {
         const { bundleUploadId, encryptedManifest } = req.body;
         if (!bundleUploadId || !ongoingBundles.has(bundleUploadId)) {
             return res.status(400).json({ error: 'Invalid bundle upload ID.' });
@@ -825,7 +850,7 @@ if (enableUpload) {
 
         const bundleId = uuidv4();
 
-        // Calculate total size
+        // Calculate total size for logging only
         let totalSizeBytes = 0;
         for (const result of bundleSession.completedFileResults) {
             totalSizeBytes += result.sizeBytes;
@@ -836,16 +861,21 @@ if (enableUpload) {
         if (bundleSession.sealedManifest) {
             // Sealed bundle: store only the encrypted manifest blob.
             // The server cannot read the file list - only the downloader with the key can.
-            bundleDatabase.set(bundleId, {
+            // Client will derive totalSizeBytes and fileCount from decrypted manifest.
+            const bundleRecord = {
                 encryptedManifest,
                 isEncrypted: true,
                 sealed: true,
                 expiresAt,
                 maxDownloads: bundleSession.maxDownloads,
-                downloadCount: 0,
-                totalSizeBytes,
-                fileCount: bundleSession.fileCount,
-            });
+            };
+
+            // Only track download count when there's a limit (not unlimited)
+            if (bundleSession.maxDownloads > 0) {
+                bundleRecord.downloadCount = 0;
+            }
+
+            await bundleDatabase.set(bundleId, bundleRecord);
         } else {
             // Unsealed bundle: build and store plaintext file list (existing behavior)
             const bundleFiles = [];
@@ -857,20 +887,25 @@ if (enableUpload) {
                 });
 
                 // Update the file record with the actual bundleId
-                const fileRecord = fileDatabase.get(result.fileId);
+                const fileRecord = await fileDatabase.get(result.fileId);
                 if (fileRecord) {
-                    fileDatabase.set(result.fileId, { ...fileRecord, bundleId });
+                    await fileDatabase.set(result.fileId, { ...fileRecord, bundleId });
                 }
             }
 
-            bundleDatabase.set(bundleId, {
+            const bundleRecord = {
                 files: bundleFiles,
                 isEncrypted: bundleSession.isEncrypted,
                 expiresAt,
                 maxDownloads: bundleSession.maxDownloads,
-                downloadCount: 0,
-                totalSizeBytes,
-            });
+            };
+
+            // Only track download count when there's a limit (not unlimited)
+            if (bundleSession.maxDownloads > 0) {
+                bundleRecord.downloadCount = 0;
+            }
+
+            await bundleDatabase.set(bundleId, bundleRecord);
         }
 
         ongoingBundles.delete(bundleUploadId);
@@ -878,9 +913,9 @@ if (enableUpload) {
         res.status(200).json({ bundleId });
     });
 
-    apiRouter.get('/file/:fileId/meta', limiter, (req, res) => {
+    apiRouter.get('/file/:fileId/meta', limiter, async (req, res) => {
         const fileId = req.params.fileId;
-        const fileInfo = fileDatabase.get(fileId);
+        const fileInfo = await fileDatabase.get(fileId);
 
         if (!fileInfo) {
             return res.status(404).json({ error: 'File not found.' });
@@ -911,9 +946,9 @@ if (enableUpload) {
         res.status(200).json(payload);
     });
 
-    apiRouter.get('/file/:fileId', limiter, (req, res) => {
+    apiRouter.get('/file/:fileId', limiter, async (req, res) => {
         const fileId = req.params.fileId;
-        const fileInfo = fileDatabase.get(fileId);
+        const fileInfo = await fileDatabase.get(fileId);
 
         if (!fileInfo) {
             return res.status(404).json({ error: 'File not found.' });
@@ -935,7 +970,7 @@ if (enableUpload) {
         const readStream = fs.createReadStream(fileInfo.path);
         readStream.pipe(res);
 
-        readStream.on('close', () => {
+        readStream.on('close', async () => {
             // Skip download counting for files that belong to a bundle
             // (bundle download count is tracked separately via /api/bundle/:bundleId/downloaded)
             if (fileInfo.bundleId) {
@@ -953,11 +988,11 @@ if (enableUpload) {
                 currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
 
                 fs.rm(fileInfo.path, { force: true }, () => { });
-                fileDatabase.delete(fileId);
+                await fileDatabase.delete(fileId);
                 log('debug', `[${fileInfo.isEncrypted ? 'Encrypted' : 'Simple'}] File data sent and deleted (${newDownloadCount}/${maxDl} downloads).${maxStorageGB !== 0 ? ` Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.` : ''}`);
             } else {
                 // Update download count in database
-                fileDatabase.set(fileId, {
+                await fileDatabase.set(fileId, {
                     ...fileInfo,
                     downloadCount: newDownloadCount,
                 });
@@ -968,9 +1003,9 @@ if (enableUpload) {
 
     // ===== Bundle API Endpoints =====
 
-    apiRouter.get('/bundle/:bundleId/meta', limiter, (req, res) => {
+    apiRouter.get('/bundle/:bundleId/meta', limiter, async (req, res) => {
         const bundleId = req.params.bundleId;
-        const bundleInfo = bundleDatabase.get(bundleId);
+        const bundleInfo = await bundleDatabase.get(bundleId);
 
         if (!bundleInfo) {
             return res.status(404).json({ error: 'Bundle not found.' });
@@ -982,21 +1017,19 @@ if (enableUpload) {
 
         // Sealed bundles return only the encrypted manifest blob.
         // The server cannot read the file list - the client must decrypt it.
+        // Client can derive totalSizeBytes and fileCount from the decrypted manifest.
         if (bundleInfo.sealed) {
             return res.status(200).json({
                 isEncrypted: true,
                 sealed: true,
                 encryptedManifest: bundleInfo.encryptedManifest,
-                totalSizeBytes: bundleInfo.totalSizeBytes,
-                fileCount: bundleInfo.fileCount,
             });
         }
 
         // Unsealed bundles return the structured file list
+        // Client will derive totalSizeBytes and fileCount from the files array
         const payload = {
             isEncrypted: bundleInfo.isEncrypted,
-            totalSizeBytes: bundleInfo.totalSizeBytes,
-            fileCount: bundleInfo.files.length,
             files: bundleInfo.files.map(f => {
                 const entry = { fileId: f.fileId, sizeBytes: f.sizeBytes };
                 if (bundleInfo.isEncrypted) {
@@ -1011,9 +1044,9 @@ if (enableUpload) {
         res.status(200).json(payload);
     });
 
-    apiRouter.post('/bundle/:bundleId/downloaded', limiter, (req, res) => {
+    apiRouter.post('/bundle/:bundleId/downloaded', limiter, async (req, res) => {
         const bundleId = req.params.bundleId;
-        const bundleInfo = bundleDatabase.get(bundleId);
+        const bundleInfo = await bundleDatabase.get(bundleId);
 
         if (!bundleInfo) {
             return res.status(404).json({ error: 'Bundle not found.' });
@@ -1026,26 +1059,26 @@ if (enableUpload) {
             if (bundleInfo.sealed) {
                 // Sealed bundle: only delete the manifest record.
                 // Individual files are independent and expire on their own.
-                bundleDatabase.delete(bundleId);
+                await bundleDatabase.delete(bundleId);
                 log('debug', `Sealed bundle manifest deleted (${newDownloadCount}/${maxDl} downloads). Member files will expire independently.`);
             } else {
                 // Unsealed bundle: delete all member files and the bundle record
                 for (const f of bundleInfo.files) {
-                    const fileInfo = fileDatabase.get(f.fileId);
+                    const fileInfo = await fileDatabase.get(f.fileId);
                     if (fileInfo) {
                         try {
                             const stats = fs.statSync(fileInfo.path);
                             currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
                         } catch (e) { }
                         fs.rm(fileInfo.path, { force: true }, () => { });
-                        fileDatabase.delete(f.fileId);
+                        await fileDatabase.delete(f.fileId);
                     }
                 }
-                bundleDatabase.delete(bundleId);
+                await bundleDatabase.delete(bundleId);
                 log('debug', `Bundle downloaded and deleted (${newDownloadCount}/${maxDl} downloads).`);
             }
         } else {
-            bundleDatabase.set(bundleId, { ...bundleInfo, downloadCount: newDownloadCount });
+            await bundleDatabase.set(bundleId, { ...bundleInfo, downloadCount: newDownloadCount });
             log('debug', `Bundle downloaded (${newDownloadCount}/${maxDl === 0 ? 'unlimited' : maxDl} downloads).`);
         }
 
@@ -1085,7 +1118,7 @@ apiRouter.get('/info', limiter, (req, res) => {
     });
 });
 
-apiRouter.post('/resolve', limiter, (req, res) => {
+apiRouter.post('/resolve', limiter, async (req, res) => {
     const raw = String(req.body?.value || '').trim();
     if (!raw) {
         return res.status(400).json({ valid: false, error: 'Missing sharing code.' });
@@ -1101,7 +1134,7 @@ apiRouter.post('/resolve', limiter, (req, res) => {
             const url = new URL(raw);
             const origin = `${req.protocol}://${req.get('host')}`;
             if (url.origin !== origin) {
-                return res.status(200).json({ valid: true, type: 'external', target: url.toString() });
+                return res.status(200).json({ valid: false, reason: 'URL must be from this server.' });
             }
 
             const path = decodeURIComponent(url.pathname || '');
@@ -1118,7 +1151,7 @@ apiRouter.post('/resolve', limiter, (req, res) => {
 
             if (path.startsWith('/b/')) {
                 const bundleId = path.slice(3);
-                if (isUuid(bundleId) && enableUpload && bundleDatabase && bundleDatabase.get(bundleId)) {
+                if (isUuid(bundleId) && enableUpload && bundleDatabase && await bundleDatabase.get(bundleId)) {
                     return res.status(200).json({ valid: true, type: 'bundle', target: `/b/${bundleId}` });
                 }
             }
@@ -1127,10 +1160,10 @@ apiRouter.post('/resolve', limiter, (req, res) => {
                 const id = path.slice(1);
                 if (isUuid(id)) {
                     // Check bundles first, then files
-                    if (enableUpload && bundleDatabase && bundleDatabase.get(id)) {
+                    if (enableUpload && bundleDatabase && await bundleDatabase.get(id)) {
                         return res.status(200).json({ valid: true, type: 'bundle', target: `/b/${id}` });
                     }
-                    const fileInfo = fileDatabase.get(id);
+                    const fileInfo = await fileDatabase.get(id);
                     if (!fileInfo) {
                         return res.status(200).json({ valid: false, reason: 'File not found.' });
                     }
@@ -1147,10 +1180,10 @@ apiRouter.post('/resolve', limiter, (req, res) => {
     const compact = raw.replace(/\s+/g, '');
     if (isUuid(compact)) {
         // Check bundles first, then files
-        if (enableUpload && bundleDatabase && bundleDatabase.get(compact)) {
+        if (enableUpload && bundleDatabase && await bundleDatabase.get(compact)) {
             return res.status(200).json({ valid: true, type: 'bundle', target: `/b/${compact}` });
         }
-        const fileInfo = enableUpload && fileDatabase ? fileDatabase.get(compact) : null;
+        const fileInfo = enableUpload && fileDatabase ? await fileDatabase.get(compact) : null;
         if (!fileInfo) {
             return res.status(200).json({ valid: false, reason: 'File not found.' });
         }
@@ -1199,9 +1232,9 @@ if (enableUpload) {
     app.use('/upload', uploadRouter);
 
     // Bundle download page
-    app.get('/b/:bundleId', limiter, (req, res) => {
+    app.get('/b/:bundleId', limiter, async (req, res) => {
         const bundleId = req.params.bundleId;
-        const bundleInfo = bundleDatabase.get(bundleId);
+        const bundleInfo = await bundleDatabase.get(bundleId);
 
         if (!bundleInfo) return res.status(404).render('pages/404', { serverName });
 
@@ -1221,16 +1254,16 @@ if (enableUpload) {
     });
 
     // Standard single-file download page
-    app.get(`/:fileId`, limiter, (req, res) => {
+    app.get(`/:fileId`, limiter, async (req, res) => {
         const fileId = req.params.fileId;
 
         // Check if this ID is actually a bundle
-        const bundleInfo = bundleDatabase.get(fileId);
+        const bundleInfo = await bundleDatabase.get(fileId);
         if (bundleInfo) {
             return res.redirect(301, `/b/${fileId}`);
         }
 
-        const fileInfo = fileDatabase.get(fileId);
+        const fileInfo = await fileDatabase.get(fileId);
 
         if (!fileInfo) return res.status(404).render('pages/404', { serverName });
 
@@ -1254,9 +1287,9 @@ if (enableUpload) {
 app.use((_req, res) => res.status(404).render('pages/404', { serverName }));
 
 if (enableUpload) {
-    const cleanupExpiredFiles = () => {
+    const cleanupExpiredFiles = async () => {
         const now = Date.now();
-        const allFiles = preserveUploads ? fileDatabase.getAll() : Array.from(fileDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
+        const allFiles = await fileDatabase.all();
         for (const record of allFiles) {
             if (record.value?.expiresAt && record.value.expiresAt < now) {
                 // Skip files that belong to a bundle (they are cleaned up with the bundle)
@@ -1267,12 +1300,12 @@ if (enableUpload) {
                     currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
                     fs.rmSync(record.value.path, { force: true });
                 } catch (e) { }
-                fileDatabase.delete(record.key);
+                await fileDatabase.delete(record.id);
             }
         }
 
         // Clean up expired bundles and their member files
-        const allBundles = preserveUploads ? bundleDatabase.getAll() : Array.from(bundleDatabase.entries()).map(([k, v]) => ({ key: k, value: v }));
+        const allBundles = await bundleDatabase.all();
         for (const record of allBundles) {
             if (record.value?.expiresAt && record.value.expiresAt < now) {
                 if (record.value.sealed) {
@@ -1283,18 +1316,18 @@ if (enableUpload) {
                     // Unsealed bundle: delete member files
                     log('debug', `Bundle expired. Deleting ${record.value.files?.length || 0} member files...`);
                     for (const f of (record.value.files || [])) {
-                        const fileInfo = fileDatabase.get(f.fileId);
+                        const fileInfo = await fileDatabase.get(f.fileId);
                         if (fileInfo) {
                             try {
                                 const stats = fs.statSync(fileInfo.path);
                                 currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
                                 fs.rmSync(fileInfo.path, { force: true });
                             } catch (e) { }
-                            fileDatabase.delete(f.fileId);
+                            await fileDatabase.delete(f.fileId);
                         }
                     }
                 }
-                bundleDatabase.delete(record.key);
+                await bundleDatabase.delete(record.id);
             }
         }
     };

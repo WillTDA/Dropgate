@@ -357,6 +357,142 @@ export class DropgateClient {
   }
 
   /**
+   * Fetch metadata for a single file from the server.
+   * @param fileId - The file ID to fetch metadata for.
+   * @param opts - Optional connection options (timeout, signal).
+   * @returns File metadata including size, filename, and encryption status.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the file is not found or server returns an error.
+   */
+  async getFileMetadata(
+    fileId: string,
+    opts?: ConnectOptions
+  ): Promise<FileMetadata> {
+    if (!fileId || typeof fileId !== 'string') {
+      throw new DropgateValidationError('File ID is required.');
+    }
+
+    const { timeoutMs = 5000, signal } = opts ?? {};
+
+    const url = `${this.baseUrl}/api/file/${encodeURIComponent(fileId)}/meta`;
+    const { res, json } = await fetchJson(this.fetchFn, url, {
+      method: 'GET',
+      timeoutMs,
+      signal,
+    });
+
+    if (!res.ok) {
+      const msg =
+        (json && typeof json === 'object' && 'error' in json
+          ? (json as { error: string }).error
+          : null) || `Failed to fetch file metadata (status ${res.status}).`;
+      throw new DropgateProtocolError(msg, { details: json });
+    }
+
+    return json as FileMetadata;
+  }
+
+  /**
+   * Fetch metadata for a bundle from the server and derive computed fields.
+   * For sealed bundles, decrypts the manifest to extract file list.
+   * Automatically derives totalSizeBytes and fileCount from the files array.
+   * @param bundleId - The bundle ID to fetch metadata for.
+   * @param keyB64 - Base64-encoded decryption key (required for encrypted bundles).
+   * @param opts - Optional connection options (timeout, signal).
+   * @returns Complete bundle metadata with all files and computed fields.
+   * @throws {DropgateNetworkError} If the server cannot be reached.
+   * @throws {DropgateProtocolError} If the bundle is not found or server returns an error.
+   * @throws {DropgateValidationError} If decryption key is missing for encrypted bundle.
+   */
+  async getBundleMetadata(
+    bundleId: string,
+    keyB64?: string,
+    opts?: ConnectOptions
+  ): Promise<BundleMetadata> {
+    if (!bundleId || typeof bundleId !== 'string') {
+      throw new DropgateValidationError('Bundle ID is required.');
+    }
+
+    const { timeoutMs = 5000, signal } = opts ?? {};
+
+    const url = `${this.baseUrl}/api/bundle/${encodeURIComponent(bundleId)}/meta`;
+    const { res, json } = await fetchJson(this.fetchFn, url, {
+      method: 'GET',
+      timeoutMs,
+      signal,
+    });
+
+    if (!res.ok) {
+      const msg =
+        (json && typeof json === 'object' && 'error' in json
+          ? (json as { error: string }).error
+          : null) || `Failed to fetch bundle metadata (status ${res.status}).`;
+      throw new DropgateProtocolError(msg, { details: json });
+    }
+
+    const serverMeta = json as {
+      isEncrypted: boolean;
+      sealed?: boolean;
+      encryptedManifest?: string;
+      files?: Array<{
+        fileId: string;
+        sizeBytes: number;
+        filename?: string;
+        encryptedFilename?: string;
+      }>;
+    };
+
+    let files: Array<{
+      fileId: string;
+      sizeBytes: number;
+      filename?: string;
+      encryptedFilename?: string;
+    }> = [];
+
+    // Handle sealed bundles: decrypt manifest to get file list
+    if (serverMeta.sealed && serverMeta.encryptedManifest) {
+      if (!keyB64) {
+        throw new DropgateValidationError(
+          'Decryption key (keyB64) is required for encrypted sealed bundles.'
+        );
+      }
+
+      const key = await importKeyFromBase64(this.cryptoObj, keyB64);
+      const encryptedBytes = this.base64.decode(serverMeta.encryptedManifest);
+      const decryptedBuffer = await decryptChunk(this.cryptoObj, encryptedBytes, key);
+      const manifestJson = new TextDecoder().decode(decryptedBuffer);
+      const manifest = JSON.parse(manifestJson) as {
+        files: Array<{ fileId: string; sizeBytes: number; name: string }>
+      };
+
+      // Map manifest files to consistent format (name -> filename for consistency)
+      files = manifest.files.map(f => ({
+        fileId: f.fileId,
+        sizeBytes: f.sizeBytes,
+        filename: f.name,
+      }));
+    } else if (serverMeta.files) {
+      // Unsealed bundle: use files from server response
+      files = serverMeta.files;
+    } else {
+      throw new DropgateProtocolError('Invalid bundle metadata: missing files or manifest.');
+    }
+
+    // Derive totalSizeBytes and fileCount from files array
+    const totalSizeBytes = files.reduce((sum, f) => sum + (f.sizeBytes || 0), 0);
+    const fileCount = files.length;
+
+    return {
+      isEncrypted: serverMeta.isEncrypted,
+      sealed: serverMeta.sealed,
+      encryptedManifest: serverMeta.encryptedManifest,
+      files,
+      totalSizeBytes,
+      fileCount,
+    };
+  }
+
+  /**
    * Validate file and upload settings against server capabilities.
    * @param opts - Validation options containing file, settings, and server info.
    * @returns True if validation passes.
@@ -919,24 +1055,14 @@ export class DropgateClient {
     // ========== BUNDLE ==========
     progress({ phase: 'metadata', text: 'Fetching bundle info...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
-    const { signal: metaSignal, cleanup: metaCleanup } = makeAbortSignal(signal, timeoutMs);
+    // Use getBundleMetadata to fetch metadata with proper derivation
     let bundleMeta: BundleMetadata;
-
     try {
-      const metaRes = await this.fetchFn(`${baseUrl}/api/bundle/${bundleId}/meta`, {
-        method: 'GET', headers: { Accept: 'application/json' }, signal: metaSignal,
-      });
-      if (!metaRes.ok) {
-        if (metaRes.status === 404) throw new DropgateProtocolError('Bundle not found or has expired.');
-        throw new DropgateProtocolError(`Failed to fetch bundle metadata (status ${metaRes.status}).`);
-      }
-      bundleMeta = await metaRes.json() as BundleMetadata;
+      bundleMeta = await this.getBundleMetadata(bundleId!, keyB64, { timeoutMs, signal });
     } catch (err) {
       if (err instanceof DropgateError) throw err;
       if (err instanceof Error && err.name === 'AbortError') throw new DropgateAbortError('Download cancelled.');
       throw new DropgateNetworkError('Could not fetch bundle metadata.', { cause: err });
-    } finally {
-      metaCleanup();
     }
 
     const isEncrypted = Boolean(bundleMeta.isEncrypted);
@@ -1107,24 +1233,14 @@ export class DropgateClient {
     // Fetch metadata
     progress({ phase: 'metadata', text: 'Fetching file info...', processedBytes: 0, totalBytes: 0, percent: 0 });
 
-    const { signal: metaSignal, cleanup: metaCleanup } = makeAbortSignal(signal, timeoutMs);
+    // Use getFileMetadata for consistent metadata fetching
     let metadata: FileMetadata;
-
     try {
-      const metaRes = await this.fetchFn(`${baseUrl}/api/file/${fileId}/meta`, {
-        method: 'GET', headers: { Accept: 'application/json' }, signal: metaSignal,
-      });
-      if (!metaRes.ok) {
-        if (metaRes.status === 404) throw new DropgateProtocolError('File not found or has expired.');
-        throw new DropgateProtocolError(`Failed to fetch file metadata (status ${metaRes.status}).`);
-      }
-      metadata = await metaRes.json() as FileMetadata;
+      metadata = await this.getFileMetadata(fileId, { timeoutMs, signal });
     } catch (err) {
       if (err instanceof DropgateError) throw err;
       if (err instanceof Error && err.name === 'AbortError') throw new DropgateAbortError('Download cancelled.');
       throw new DropgateNetworkError('Could not fetch file metadata.', { cause: err });
-    } finally {
-      metaCleanup();
     }
 
     const isEncrypted = Boolean(metadata.isEncrypted);

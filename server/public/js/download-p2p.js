@@ -32,6 +32,7 @@ let transferCompleted = false;
 let writer = null;
 let zipWriter = null;
 let isMultiFile = false;
+let fileCount = 0;
 let pendingSendReady = null;
 let fileName = null;
 let p2pSession = null;
@@ -226,9 +227,10 @@ async function start() {
         elTitle.textContent = 'Connected';
         elMsg.textContent = 'Waiting for file details...';
       },
-      onMeta: ({ name, total: nextTotal, sendReady, fileCount, files, totalSize }) => {
+      onMeta: ({ name, total: nextTotal, sendReady, fileCount: metaFileCount, files, totalSize }) => {
         total = totalSize || nextTotal;
         received = 0;
+        fileCount = metaFileCount || 1;
         isMultiFile = fileCount > 1;
         fileName = isMultiFile ? `dropgate-bundle-${code}.zip` : name;
 

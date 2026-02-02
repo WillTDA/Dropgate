@@ -155,13 +155,9 @@ async function loadMetadata() {
   fileIdEl.textContent = fileId;
 
   try {
-    const response = await fetch(`/api/file/${fileId}/meta`);
-    if (!response.ok) {
-      showError('File Not Found', 'This file link is invalid or has already expired.');
-      return;
-    }
+    // Use core library to fetch file metadata
+    const metadata = await client.getFileMetadata(fileId);
 
-    const metadata = await response.json();
     downloadState.isEncrypted = Boolean(metadata.isEncrypted);
     downloadState.sizeBytes = metadata.sizeBytes;
     fileEncryptionEl.textContent = metadata.isEncrypted ? 'End-to-End Encrypted' : 'None';

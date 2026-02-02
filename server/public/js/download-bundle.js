@@ -1,4 +1,4 @@
-import { DropgateClient, importKeyFromBase64, decryptFilenameFromBase64, decryptChunk } from './dropgate-core.js';
+import { DropgateClient, decryptFilenameFromBase64 } from './dropgate-core.js';
 import { setStatusError, setStatusSuccess, StatusType, Icons, updateStatusCard } from './status-card.js';
 
 const statusTitle = document.getElementById('status-title');
@@ -281,9 +281,6 @@ async function downloadAllAsZip() {
       title: 'Downloads Started',
       message: `${bundleState.files.length} files should be downloading. Check your browser's download bar.`,
     });
-    downloadActions.style.display = 'block';
-    downloadAllButton.style.display = 'inline-block';
-    downloadAllButton.textContent = 'Download All Again';
     return;
   }
 
@@ -355,13 +352,13 @@ async function loadMetadata() {
   bundleState.bundleId = bundleId;
 
   try {
-    const response = await fetch(`/api/bundle/${bundleId}/meta`);
-    if (!response.ok) {
-      showError('Bundle Not Found', 'This bundle link is invalid or has already expired.');
-      return;
-    }
+    // Get decryption key from URL hash if present
+    const hash = window.location.hash.substring(1);
+    bundleState.keyB64 = hash || null;
 
-    const meta = await response.json();
+    // Use core library to fetch and process bundle metadata
+    const meta = await client.getBundleMetadata(bundleId, bundleState.keyB64);
+
     bundleState.isEncrypted = Boolean(meta.isEncrypted);
     bundleState.totalSizeBytes = meta.totalSizeBytes;
 
@@ -377,32 +374,24 @@ async function loadMetadata() {
         return;
       }
 
-      const hash = window.location.hash.substring(1);
-      if (!hash) {
+      if (!bundleState.keyB64) {
         showError('Missing Decryption Key', 'The decryption key was not found in the URL.');
         return;
       }
 
-      bundleState.keyB64 = hash;
-      const key = await importKeyFromBase64(crypto, hash);
-
-      if (meta.sealed && meta.encryptedManifest) {
-        // Sealed bundle: decrypt the manifest to discover the file list
-        const encryptedBytes = Uint8Array.from(atob(meta.encryptedManifest), c => c.charCodeAt(0));
-        const decryptedBuffer = await decryptChunk(crypto, encryptedBytes, key);
-        const manifestJson = new TextDecoder().decode(decryptedBuffer);
-        const manifest = JSON.parse(manifestJson);
-
-        bundleState.files = manifest.files.map(f => ({
+      // For sealed bundles, filenames are already decrypted by the core library
+      // For unsealed bundles, decrypt individual filenames
+      if (meta.sealed) {
+        bundleState.files = meta.files.map(f => ({
           fileId: f.fileId,
           sizeBytes: f.sizeBytes,
         }));
-        bundleState.filenames = manifest.files.map(f => f.name);
+        // Core library maps decrypted manifest 'name' to 'filename' for consistency
+        bundleState.filenames = meta.files.map(f => f.filename || 'file');
       } else {
-        // Non-sealed encrypted bundle: decrypt individual filenames
         bundleState.files = meta.files;
         for (const f of meta.files) {
-          bundleState.filenames.push(await decryptFilenameFromBase64(crypto, f.encryptedFilename, key));
+          bundleState.filenames.push(await decryptFilenameFromBase64(crypto, f.encryptedFilename, bundleState.keyB64));
         }
       }
     } else {

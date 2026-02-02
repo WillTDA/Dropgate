@@ -657,6 +657,7 @@ function showShare({ link = '', title = 'Upload Complete', sub = 'Share this lin
 }
 
 function resetToMain() {
+  stopP2P();
   state.files = [];
   state.fileTooLargeForStandard = false;
   updateFileUI();
@@ -666,7 +667,6 @@ function resetToMain() {
   els.p2pLink.value = '';
   els.progressFill.style.width = '0%';
   els.progressBytes.textContent = '0 / 0';
-  stopP2P();
   updateStartEnabled();
 }
 
@@ -915,6 +915,7 @@ async function startP2PSendFlow() {
     file,
     Peer,
     onCode: (id) => {
+      if (!state.p2pSession) return; // Session stopped, ignore callback
       showPanels('p2pwait');
       // Reset visibility of share elements for new session
       setHidden(els.p2pCode, false);
@@ -932,6 +933,7 @@ async function startP2PSendFlow() {
       els.p2pLink.value = link;
     },
     onStatus: ({ phase, message }) => {
+      if (!state.p2pSession) return; // Session stopped, ignore callback
       if (phase === 'waiting') {
         // Update p2pWaitCard title/subtitle to show waiting status
         const waitTitle = els.p2pWaitCard?.querySelector('h5');
@@ -955,6 +957,7 @@ async function startP2PSendFlow() {
       }
     },
     onProgress: ({ processedBytes, totalBytes, percent }) => {
+      if (!state.p2pSession) return; // Session stopped, ignore callback
       // Update title and store progress for visibility handler
       updateTitleProgress(percent);
       currentTransferProgress = {
@@ -988,12 +991,12 @@ async function startP2PSendFlow() {
     onDisconnect: () => {
       resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
-      showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'link_off', iconColor: 'text-warning' });
-      stopP2P();
+      showToast('The receiver disconnected.', 'warning');
+      resetToMain();
     },
     onCancel: (evt) => {
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
-      stopP2P();
       const msg = evt?.cancelledBy === 'receiver'
         ? 'The receiver cancelled the transfer.'
         : 'Transfer cancelled.';

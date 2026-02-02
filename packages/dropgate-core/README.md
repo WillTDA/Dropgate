@@ -94,6 +94,32 @@ console.log('Download URL:', result.downloadUrl);
 // session.cancel('User cancelled');
 ```
 
+### Fetching File/Bundle Metadata
+
+```javascript
+// Fetch file metadata (size, encryption status, filename)
+const fileMeta = await client.getFileMetadata('file-id-123');
+console.log('File size:', fileMeta.sizeBytes);
+console.log('Encrypted:', fileMeta.isEncrypted);
+console.log('Filename:', fileMeta.filename || fileMeta.encryptedFilename);
+
+// Fetch bundle metadata with automatic derivation
+const bundleMeta = await client.getBundleMetadata(
+  'bundle-id-456',
+  'base64-key-from-url-hash' // Required for encrypted bundles
+);
+
+console.log('Files:', bundleMeta.fileCount);
+console.log('Total size:', bundleMeta.totalSizeBytes);
+console.log('Sealed:', bundleMeta.sealed);
+
+// For sealed bundles, the manifest is automatically decrypted
+// and files array is populated from the decrypted manifest
+bundleMeta.files.forEach(file => {
+  console.log(`- ${file.filename}: ${file.sizeBytes} bytes`);
+});
+```
+
 ### Downloading Files
 
 ```javascript
@@ -217,6 +243,41 @@ const { serverInfo } = await getServerInfo({
 console.log('Server version:', serverInfo.version);
 ```
 
+## Metadata Fetching
+
+The core library provides intelligent metadata fetching methods that handle all the complexity of deriving computed fields from server responses.
+
+### Philosophy
+
+The server stores and sends only **minimal, essential data**:
+- For files: Basic metadata (size, encryption flag, filename)
+- For bundles: File list (for unsealed) or encrypted manifest (for sealed)
+
+The core library **derives all computed fields**:
+- `totalSizeBytes`: Sum of all file sizes
+- `fileCount`: Length of files array
+- Decrypted manifest contents (for sealed bundles)
+
+### Benefits
+
+1. **Single Source of Truth**: All derivation logic lives in one place (the core library)
+2. **Server Efficiency**: Server stores less redundant data
+3. **Client Flexibility**: Clients can compute fields in any format they need
+4. **Future-Proof**: Changes to derivation logic only require library updates
+
+### Usage
+
+```javascript
+// The core library automatically:
+// 1. Fetches raw metadata from the server
+// 2. Decrypts sealed bundle manifests (if keyB64 provided)
+// 3. Derives totalSizeBytes and fileCount from files array
+// 4. Returns a complete BundleMetadata object
+
+const meta = await client.getBundleMetadata('bundle-id', 'optional-key');
+// meta.totalSizeBytes and meta.fileCount are computed client-side
+```
+
 ## API Reference
 
 ### DropgateClient
@@ -247,6 +308,8 @@ The main client class for interacting with Dropgate servers.
 | Method | Description |
 | --- | --- |
 | `connect(opts?)` | Fetch server info, check compatibility, cache result |
+| `getFileMetadata(fileId, opts?)` | Fetch metadata for a single file |
+| `getBundleMetadata(bundleId, keyB64?, opts?)` | Fetch bundle metadata with automatic manifest decryption and field derivation |
 | `uploadFiles(opts)` | Upload a file with optional encryption |
 | `downloadFiles(opts)` | Download a file with optional decryption |
 | `p2pSend(opts)` | Start a P2P send session |
