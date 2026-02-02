@@ -195,6 +195,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         testConnectionBtn.addEventListener('click', async () => {
             const serverUrl = serverUrlInput.value.trim();
             if (!serverUrl) {
+                updateUploadabilityState(false);
                 connectionStatus.textContent = 'Please enter a server URL.';
                 connectionStatus.className = 'form-text mt-1 text-warning';
                 return;
