@@ -11,9 +11,11 @@ import type { FileSource, ServerInfo, CryptoAdapter, BaseProgressEvent } from '.
 export type P2PSendState =
   | 'initializing'  // Peer is being created
   | 'listening'     // Waiting for receiver to connect
+  | 'handshaking'   // Exchanging protocol version
   | 'negotiating'   // Connected, sending metadata, waiting for ready
   | 'transferring'  // Actively sending file data
   | 'finishing'     // Sent end message, waiting for ack
+  | 'awaiting_ack'  // Waiting for final end_ack confirmation
   | 'completed'     // Transfer successful
   | 'cancelled'     // Transfer cancelled by user
   | 'closed';       // Session ended (success, error, or stopped)
@@ -24,6 +26,7 @@ export type P2PSendState =
 export type P2PReceiveState =
   | 'initializing'  // Peer is being created
   | 'connecting'    // Connecting to sender
+  | 'handshaking'   // Exchanging protocol version
   | 'negotiating'   // Connected, waiting for metadata
   | 'transferring'  // Actively receiving file data
   | 'completed'     // Transfer successful
@@ -39,7 +42,7 @@ export type P2PReceiveState =
  * Consumer must provide this constructor to P2P functions.
  */
 export interface PeerConstructor {
-  new (id?: string, options?: PeerOptions): PeerInstance;
+  new(id?: string, options?: PeerOptions): PeerInstance;
 }
 
 /**
@@ -140,10 +143,10 @@ export interface P2PStatusEvent {
 }
 
 /** Progress event for P2P send operations. */
-export interface P2PSendProgressEvent extends BaseProgressEvent {}
+export interface P2PSendProgressEvent extends BaseProgressEvent { }
 
 /** Progress event for P2P receive operations. */
-export interface P2PReceiveProgressEvent extends BaseProgressEvent {}
+export interface P2PReceiveProgressEvent extends BaseProgressEvent { }
 
 /** Metadata event when receiving a file. */
 export interface P2PMetadataEvent {
@@ -151,6 +154,12 @@ export interface P2PMetadataEvent {
   total: number;
   /** Call this to signal the sender to begin transfer (when autoReady is false). */
   sendReady?: () => void;
+  /** v3: Total number of files in a multi-file transfer (undefined for single file). */
+  fileCount?: number;
+  /** v3: List of all files (names and sizes) in a multi-file transfer. */
+  files?: Array<{ name: string; size: number }>;
+  /** v3: Total size across all files. */
+  totalSize?: number;
 }
 
 /** Completion event for P2P receive operations. */
@@ -167,6 +176,30 @@ export interface P2PCancellationEvent {
   message?: string;
 }
 
+/** Connection health event for monitoring. */
+export interface P2PConnectionHealthEvent {
+  /** ICE connection state. */
+  iceConnectionState: 'connected' | 'disconnected' | 'failed' | 'checking' | 'new' | 'closed';
+  /** Estimated round-trip time in milliseconds. */
+  rtt?: number;
+  /** Bytes currently buffered waiting to send. */
+  bufferedAmount?: number;
+  /** Milliseconds since last activity. */
+  lastActivityMs: number;
+}
+
+/** Resumable transfer info. */
+export interface P2PResumeInfo {
+  /** Session ID to resume. */
+  sessionId: string;
+  /** Bytes already received in previous session. */
+  receivedBytes: number;
+  /** Total bytes expected. */
+  totalBytes: number;
+  /** Whether resume is possible. */
+  canResume: boolean;
+}
+
 // ============================================================================
 // P2P Send Options
 // ============================================================================
@@ -175,8 +208,8 @@ export interface P2PCancellationEvent {
  * Options for starting a P2P send session.
  */
 export interface P2PSendOptions extends P2PServerConfig {
-  /** File to send. */
-  file: FileSource;
+  /** File(s) to send. A single file or an array for multi-file transfers. */
+  file: FileSource | FileSource[];
   /** PeerJS Peer constructor - REQUIRED. */
   Peer: PeerConstructor;
   /** Server info (optional, for capability checking). */
@@ -211,6 +244,16 @@ export interface P2PSendOptions extends P2PServerConfig {
   onDisconnect?: () => void;
   /** Callback when transfer is cancelled by either party. */
   onCancel?: (evt: P2PCancellationEvent) => void;
+  /** Enable chunk-level acknowledgments for flow control (default: true). */
+  chunkAcknowledgments?: boolean;
+  /** Maximum unacknowledged chunks before pausing (default: 32). */
+  maxUnackedChunks?: number;
+  /** ICE restart timeout in ms (default: 10000). */
+  iceRestartTimeoutMs?: number;
+  /** Connection health monitoring callback. */
+  onConnectionHealth?: (evt: P2PConnectionHealthEvent) => void;
+  /** Called when receiver requests resume from offset. */
+  onResumeRequest?: (info: P2PResumeInfo) => boolean;
 }
 
 /**
@@ -271,6 +314,10 @@ export interface P2PReceiveOptions extends P2PServerConfig {
   onData?: (chunk: Uint8Array) => Promise<void> | void;
   /** Callback for progress updates. */
   onProgress?: (evt: P2PReceiveProgressEvent) => void;
+  /** Callback when an individual file starts in a multi-file transfer. */
+  onFileStart?: (evt: { fileIndex: number; name: string; size: number }) => void;
+  /** Callback when an individual file ends in a multi-file transfer. */
+  onFileEnd?: (evt: { fileIndex: number; receivedBytes: number }) => void;
   /** Callback when transfer completes. */
   onComplete?: (evt: P2PReceiveCompleteEvent) => void;
   /** Callback on error. */
@@ -297,4 +344,107 @@ export interface P2PReceiveSession {
   getTotalBytes: () => number;
   /** Get the current session ID (if received from sender). */
   getSessionId: () => string | null;
+}
+
+// ============================================================================
+// Client P2P Options (used by DropgateClient.p2pSend / p2pReceive)
+// Server config and serverInfo are provided by the client internally.
+// ============================================================================
+
+/**
+ * Options for DropgateClient.p2pSend().
+ * Server connection, serverInfo, peerjsPath, iceServers, and cryptoObj
+ * are all provided internally by the client.
+ */
+export interface P2PSendFileOptions {
+  /** File(s) to send. A single file or an array for multi-file transfers. */
+  file: FileSource | FileSource[];
+  /** PeerJS Peer constructor - REQUIRED. */
+  Peer: PeerConstructor;
+  /** Custom code generator function. */
+  codeGenerator?: (cryptoObj?: CryptoAdapter) => string;
+  /** Max attempts to register a peer ID. */
+  maxAttempts?: number;
+  /** Chunk size for data transfer. */
+  chunkSize?: number;
+  /** Timeout waiting for end acknowledgment. */
+  endAckTimeoutMs?: number;
+  /** Buffer high water mark for flow control. */
+  bufferHighWaterMark?: number;
+  /** Buffer low water mark for flow control. */
+  bufferLowWaterMark?: number;
+  /** Heartbeat interval in ms for long transfers (default: 5000, 0 to disable). */
+  heartbeatIntervalMs?: number;
+  /** Enable chunk-level acknowledgments for flow control (default: true). */
+  chunkAcknowledgments?: boolean;
+  /** Maximum unacknowledged chunks before pausing (default: 32). */
+  maxUnackedChunks?: number;
+  /** ICE restart timeout in ms (default: 10000). */
+  iceRestartTimeoutMs?: number;
+  /** Callback when code is generated. */
+  onCode?: (code: string, attempt: number) => void;
+  /** Callback for status updates. */
+  onStatus?: (evt: P2PStatusEvent) => void;
+  /** Callback for progress updates. */
+  onProgress?: (evt: P2PSendProgressEvent) => void;
+  /** Callback when transfer completes. */
+  onComplete?: () => void;
+  /** Callback on error. */
+  onError?: (err: Error) => void;
+  /** Callback when receiver disconnects. */
+  onDisconnect?: () => void;
+  /** Callback when transfer is cancelled by either party. */
+  onCancel?: (evt: P2PCancellationEvent) => void;
+  /** Connection health monitoring callback. */
+  onConnectionHealth?: (evt: P2PConnectionHealthEvent) => void;
+  /** Called when receiver requests resume from offset. */
+  onResumeRequest?: (info: P2PResumeInfo) => boolean;
+}
+
+/**
+ * Options for DropgateClient.p2pReceive().
+ * Server connection, serverInfo, peerjsPath, and iceServers
+ * are all provided internally by the client.
+ */
+export interface P2PReceiveFileOptions {
+  /** Sharing code to connect to. */
+  code: string;
+  /** PeerJS Peer constructor - REQUIRED. */
+  Peer: PeerConstructor;
+  /**
+   * Whether to automatically send the "ready" signal after receiving metadata.
+   * Default: true.
+   * Set to false to show a preview and manually control when the transfer starts.
+   * When false, call the sendReady function passed to onMeta to start the transfer.
+   */
+  autoReady?: boolean;
+  /**
+   * Timeout in ms for detecting dead connections (no data received).
+   * Default: 15000 (15 seconds). Set to 0 to disable.
+   */
+  watchdogTimeoutMs?: number;
+  /** Callback for status updates. */
+  onStatus?: (evt: P2PStatusEvent) => void;
+  /**
+   * Callback when file metadata is received.
+   * When autoReady is false, this callback receives a sendReady function
+   * that must be called to signal the sender to begin the transfer.
+   */
+  onMeta?: (evt: P2PMetadataEvent) => void;
+  /** Callback when data chunk is received - consumer handles file writing. */
+  onData?: (chunk: Uint8Array) => Promise<void> | void;
+  /** Callback for progress updates. */
+  onProgress?: (evt: P2PReceiveProgressEvent) => void;
+  /** Callback when an individual file starts in a multi-file transfer. */
+  onFileStart?: (evt: { fileIndex: number; name: string; size: number }) => void;
+  /** Callback when an individual file ends in a multi-file transfer. */
+  onFileEnd?: (evt: { fileIndex: number; receivedBytes: number }) => void;
+  /** Callback when transfer completes. */
+  onComplete?: (evt: P2PReceiveCompleteEvent) => void;
+  /** Callback on error. */
+  onError?: (err: Error) => void;
+  /** Callback when sender disconnects. */
+  onDisconnect?: () => void;
+  /** Callback when transfer is cancelled by either party. */
+  onCancel?: (evt: P2PCancellationEvent) => void;
 }

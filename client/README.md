@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-2.2.1-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-3.0.0-brightgreen?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord\&logoColor=white\&style=flat-square)](https://diamonddigital.dev/discord)
@@ -33,6 +33,8 @@ It’s built to feel simple: pick a file, choose your options, hit upload, and s
 * 🧱 **Privacy by Design** | No telemetry, no analytics, and no personal identifiers. Your data stays between you and your chosen server.
 
 * 🖥️ **Cross-Platform Support** | Available for Windows, macOS, and Linux.
+
+* 📦 **Multi-File Uploads** | Select or drag-and-drop multiple files at once — they're bundled together and uploaded in one go.
 
 * ⚡ **Fast, Lightweight Interface** | Simple drag-and-drop UI focused on minimalism and clarity.
 

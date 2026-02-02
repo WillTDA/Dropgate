@@ -29,16 +29,23 @@ Set `LOG_LEVEL=DEBUG` on the server, reproduce the issue once, then set it back.
 **Uploads are disabled / 404 on upload routes**
 - Make sure `ENABLE_UPLOAD=true`.
 
-**“File exceeds limit … MB” / “Chunk too large” / 413**
+**"File exceeds limit … MB" / "Total bundle size exceeds limit" / "Chunk too large" / 413**
 - Increase `UPLOAD_MAX_FILE_SIZE_MB`.
-- If you’re behind NGINX/Caddy/etc, also check your proxy’s upload/body size limit.
+- For multi-file uploads, the default behaviour (`UPLOAD_BUNDLE_SIZE_MODE=total`) enforces the size limit against the combined size of all files. Set it to `per-file` to check each file individually instead.
+- If you're behind NGINX/Caddy/etc, also check your proxy's upload/body size limit.
 
 **“Server out of capacity” / 507**
 - Increase `UPLOAD_MAX_STORAGE_GB` (or set `0` for unlimited), and/or free disk space.
 
-**“Integrity check failed” / “Upload incomplete”**
+**"Integrity check failed" / "Upload incomplete"**
 - Often proxy buffering/timeouts, unstable networks, or middleware touching the request body.
 - Enable `LOG_LEVEL=DEBUG`, retry once, and check where it fails (init vs chunk vs complete).
+
+**Tuning chunk size**
+- The upload chunk size is controlled by `UPLOAD_CHUNK_SIZE_BYTES` (default `5242880` / 5MB, minimum `65536` / 64KB).
+- If you're behind a reverse proxy with a body size limit, make sure the proxy allows at least `UPLOAD_CHUNK_SIZE_BYTES + 1024` bytes per request (the extra 1024 accounts for encryption overhead and request framing).
+- Lowering the chunk size can help on unstable connections (smaller chunks = less data to re-upload on failure), but increases the number of HTTP requests per file and adds per-chunk overhead (hashing, encryption IV/tag).
+- The 64KB minimum prevents extreme fragmentation — values below this would generate millions of chunks for moderate files and cause significant per-chunk overhead.
 
 ## 4) Encryption / HTTPS issues
 

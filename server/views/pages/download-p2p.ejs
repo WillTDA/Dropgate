@@ -27,12 +27,22 @@
           <div id="file-details" class="mt-4" style="display: none;">
             <div class="row g-3 justify-content-center">
               <div class="col-md-6">
-                <div class="file-label">File name</div>
+                <div id="file-name-label" class="file-label">File name</div>
                 <div class="file-value" id="file-name">Loading...</div>
               </div>
               <div class="col-md-6">
                 <div class="file-label">File size</div>
                 <div class="file-value" id="file-size">Loading...</div>
+              </div>
+            </div>
+
+            <div id="p2p-file-list-container" class="mt-3" style="display: none;">
+              <button id="p2p-toggle-file-list" class="btn btn-sm btn-outline-secondary mb-2">
+                <span class="material-icons-round" style="font-size: 1rem; vertical-align: middle;">expand_more</span>
+                Show files
+              </button>
+              <div id="p2p-file-list" class="text-start" style="display: none;">
+                <ul id="p2p-file-list-items" class="list-group list-group-flush"></ul>
               </div>
             </div>
           </div>

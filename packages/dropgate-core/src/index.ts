@@ -33,17 +33,21 @@ export type {
   FetchFn,
   Base64Adapter,
   FileSource,
-  LoggerFn,
   DropgateClientOptions,
   ServerTarget,
-  UploadOptions,
+  UploadFilesOptions,
   GetServerInfoOptions,
+  ConnectOptions,
   ValidateUploadOptions,
   FileMetadata,
   DownloadProgressEvent,
-  DownloadOptions,
+  DownloadFilesOptions,
   DownloadResult,
+  BundleMetadata,
 } from './types.js';
+
+// Upload session type
+export type { UploadSession } from './types.js';
 
 // Utils - Base64
 export { bytesToBase64, arrayBufferToBase64, base64ToBytes } from './utils/base64.js';
@@ -73,44 +77,47 @@ export {
 } from './crypto/index.js';
 export { encryptToBlob, encryptFilenameToBase64 } from './crypto/encrypt.js';
 
+// ZIP
+export { StreamingZipWriter } from './zip/stream-zip.js';
+
 // Client
 export { DropgateClient, estimateTotalUploadSizeBytes, getServerInfo } from './client/DropgateClient.js';
 
 // Adapters
 export { getDefaultBase64, getDefaultCrypto, getDefaultFetch } from './adapters/defaults.js';
 
-// P2P - Re-export from p2p module for convenience
+// P2P - Utility functions still useful for consumers
 export {
-  startP2PSend,
-  startP2PReceive,
   generateP2PCode,
   isP2PCodeLike,
   isLocalhostHostname,
   isSecureContextForP2P,
-  buildPeerOptions,
-  createPeerWithRetries,
-  resolvePeerConfig,
 } from './p2p/index.js';
 
+// P2P Types - Consumer-facing types for client methods and sessions
 export type {
-  // PeerJS types
+  // State machine types
+  P2PSendState,
+  P2PReceiveState,
+  // PeerJS types (needed by consumers who provide Peer constructor)
   PeerConstructor,
   PeerInstance,
   PeerInstanceEvents,
   PeerOptions,
   DataConnection,
   DataConnectionEvents,
-  // P2P config
-  P2PServerConfig,
   // P2P event types
   P2PStatusEvent,
   P2PSendProgressEvent,
   P2PReceiveProgressEvent,
   P2PMetadataEvent,
   P2PReceiveCompleteEvent,
-  // P2P options and sessions
-  P2PSendOptions,
+  P2PConnectionHealthEvent,
+  P2PResumeInfo,
+  P2PCancellationEvent,
+  // Client P2P options and sessions
+  P2PSendFileOptions,
+  P2PReceiveFileOptions,
   P2PSendSession,
-  P2PReceiveOptions,
   P2PReceiveSession,
 } from './p2p/index.js';

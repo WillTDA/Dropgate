@@ -2,10 +2,8 @@ import {
   DEFAULT_CHUNK_SIZE,
   DropgateClient,
   estimateTotalUploadSizeBytes,
-  getServerInfo,
   isSecureContextForP2P,
   lifetimeToMs,
-  startP2PSend,
 } from './dropgate-core.js';
 
 const $ = (id) => document.getElementById(id);
@@ -16,8 +14,9 @@ const els = {
   selectFileBtn: $('selectFileBtn'),
   fileInput: $('fileInput'),
   fileChosen: $('fileChosen'),
-  fileChosenName: $('fileChosenName'),
-  fileChosenSize: $('fileChosenSize'),
+  fileChosenSummary: $('fileChosenSummary'),
+  fileChosenList: $('fileChosenList'),
+  fileChosenTotal: $('fileChosenTotal'),
   maxUploadHint: $('maxUploadHint'),
 
   modeStandard: $('modeStandard'),
@@ -83,7 +82,7 @@ const els = {
 
 const state = {
   info: null,
-  file: null,
+  files: [],
   fileTooLargeForStandard: false,
   mode: 'standard',
   encrypt: true,
@@ -92,6 +91,7 @@ const state = {
   maxSizeMB: null,
   maxLifetimeHours: null,
   maxFileDownloads: 1,
+  bundleSizeMode: 'total',
   e2ee: false,
   peerjsPath: '/peerjs',
   iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }],
@@ -100,13 +100,42 @@ const state = {
   uploadSession: null,
 };
 
-const coreClient = new DropgateClient({ clientVersion: '2.2.1' });
+// Title progress tracking
+const originalTitle = document.title;
+let currentTransferProgress = null; // { percent, doneBytes, totalBytes }
+
+const updateTitleProgress = (percent) => {
+  if (percent > 1 && percent < 100) {
+    document.title = `${Math.floor(percent)}% - ${originalTitle}`;
+  } else {
+    document.title = originalTitle;
+  }
+};
+
+const resetTitleProgress = () => {
+  document.title = originalTitle;
+  currentTransferProgress = null;
+};
+
+// Visibility change handler - sync UI immediately when tab becomes visible
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentTransferProgress) {
+    // Tab became visible and we have an active transfer
+    // Force UI update with current progress
+    const { percent, doneBytes, totalBytes, showProgress: showProgressFn } = currentTransferProgress;
+    if (showProgressFn) {
+      showProgressFn(percent, doneBytes, totalBytes);
+    }
+  }
+});
+
+const coreClient = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
   const k = 1000;
-  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
   return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
@@ -179,29 +208,70 @@ function showPanels(which) {
 }
 
 function updateFileUI() {
-  if (!state.file) {
+  if (!state.files.length) {
     setHidden(els.fileChosen, true);
     els.dropzone?.classList.remove('dragover');
     return;
   }
-  els.fileChosenName.textContent = state.file.name;
-  els.fileChosenSize.textContent = formatBytes(state.file.size);
+
+  const count = state.files.length;
+  els.fileChosenSummary.textContent = count === 1 ? '1 file selected' : `${count} files selected`;
+
+  els.fileChosenList.innerHTML = '';
+  for (let i = 0; i < state.files.length; i++) {
+    const f = state.files[i];
+    const li = document.createElement('li');
+    li.className = 'd-flex align-items-center small file-list-item';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'text-truncate me-2';
+    nameSpan.textContent = f.name;
+    nameSpan.title = f.name;
+    const rightSide = document.createElement('span');
+    rightSide.className = 'd-flex align-items-center gap-2 flex-shrink-0 ms-auto';
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'text-body-secondary';
+    sizeSpan.textContent = formatBytes(f.size);
+    rightSide.appendChild(sizeSpan);
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'file-remove-btn';
+    removeBtn.title = 'Remove file';
+    removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 14px;">close</span>';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      state.files.splice(i, 1);
+      updateFileUI();
+      state.fileTooLargeForStandard = Boolean(state.files.length && areFilesTooLargeForStandard(state.files));
+      updateStartEnabled();
+    });
+    rightSide.appendChild(removeBtn);
+    li.appendChild(nameSpan);
+    li.appendChild(rightSide);
+    els.fileChosenList.appendChild(li);
+  }
+
+  const totalSize = state.files.reduce((sum, f) => sum + f.size, 0);
+  els.fileChosenTotal.textContent = `Total: ${formatBytes(totalSize)}`;
   setHidden(els.fileChosen, false);
 }
 
-function isFileTooLargeForStandard(file) {
-  if (!file || !state.uploadEnabled) return false;
+function areFilesTooLargeForStandard(files) {
+  if (!files.length || !state.uploadEnabled) return false;
   const maxBytes = Number.isFinite(state.maxSizeMB) && state.maxSizeMB > 0
     ? state.maxSizeMB * 1000 * 1000
     : null;
   if (!maxBytes) return false;
-  const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
-  const estimatedBytes = estimateTotalUploadSizeBytes(file.size, totalChunks, Boolean(state.encrypt));
-  return estimatedBytes > maxBytes;
+  // Check total estimated size across all files
+  let totalEstimated = 0;
+  for (const file of files) {
+    const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
+    totalEstimated += estimateTotalUploadSizeBytes(file.size, totalChunks, Boolean(state.encrypt));
+  }
+  return totalEstimated > maxBytes;
 }
 
 function updateStartEnabled() {
-  const hasFile = Boolean(state.file);
+  const hasFile = state.files.length > 0;
   if (state.mode === 'standard') {
     const lifetimeOk = validateLifetimeInput();
     const maxDownloadsOk = validateMaxDownloadsInput();
@@ -213,18 +283,23 @@ function updateStartEnabled() {
   }
 }
 
-function handleFileSelection(file) {
-  state.file = file || null;
+function handleFileSelection(files) {
+  if (!files || files.length === 0) {
+    state.files = [];
+  } else {
+    // Append new files to existing selection
+    state.files = [...state.files, ...Array.from(files)];
+  }
   updateFileUI();
 
   state.fileTooLargeForStandard = false;
-  if (state.file && state.mode === 'standard' && isFileTooLargeForStandard(state.file)) {
+  if (state.files.length && state.mode === 'standard' && areFilesTooLargeForStandard(state.files)) {
     state.fileTooLargeForStandard = true;
     if (state.p2pEnabled && state.p2pSecureOk) {
       setMode('p2p');
-      showToast('File exceeds the server upload limit — using direct transfer.');
+      showToast('Files exceed the server upload limit — using direct transfer.');
     } else {
-      showToast('File exceeds the server upload limit and cannot be uploaded.');
+      showToast('Files exceed the server upload limit and cannot be uploaded.', 'danger');
     }
   }
 
@@ -249,7 +324,7 @@ function setMode(mode) {
     els.startBtn.textContent = 'Start Transfer';
   }
 
-  state.fileTooLargeForStandard = Boolean(state.file && isFileTooLargeForStandard(state.file));
+  state.fileTooLargeForStandard = Boolean(state.files.length && areFilesTooLargeForStandard(state.files));
   if (state.fileTooLargeForStandard && isStandard) {
     if (state.p2pEnabled && state.p2pSecureOk) {
       showToast('File exceeds the server upload limit — using direct transfer.');
@@ -257,7 +332,7 @@ function setMode(mode) {
       setMode('p2p');
       return;
     }
-    showToast('File exceeds the server upload limit and cannot be uploaded.');
+    showToast('File exceeds the server upload limit and cannot be uploaded.', 'danger');
   }
 
   updateStartEnabled();
@@ -346,9 +421,10 @@ function updateCapabilitiesUI() {
 
   // Upload
   if (state.uploadEnabled) {
+    const sizeLabel = state.bundleSizeMode === 'per-file' ? 'Max single file size' : 'Max upload size';
     const maxText = (state.maxSizeMB === 0)
       ? 'You can upload files of any size.'
-      : `Max upload size: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
+      : `${sizeLabel}: ${formatBytes(state.maxSizeMB * 1000 * 1000)}.`;
 
     const p2pAvailable = state.p2pEnabled && state.p2pSecureOk;
     els.maxUploadHint.textContent = p2pAvailable && state.maxSizeMB > 0
@@ -436,17 +512,13 @@ function applyLifetimeDefaults() {
 }
 
 async function loadServerInfo() {
-  const { serverInfo: info } = await getServerInfo({
-    host: location.hostname,
-    port: location.port ? Number(location.port) : undefined,
-    secure: location.protocol === 'https:',
-    timeoutMs: 5000,
-  });
+  const { serverInfo: info } = await coreClient.connect({ timeoutMs: 5000 });
   state.info = info;
 
   const upload = info?.capabilities?.upload;
   state.uploadEnabled = Boolean(upload?.enabled);
   state.maxSizeMB = state.uploadEnabled ? (upload?.maxSizeMB ?? null) : null;
+  state.bundleSizeMode = state.uploadEnabled ? (upload?.bundleSizeMode ?? 'total') : 'total';
   state.maxLifetimeHours = state.uploadEnabled ? (upload?.maxLifetimeHours ?? null) : null;
   state.maxFileDownloads = state.uploadEnabled ? (upload?.maxFileDownloads ?? 1) : 1;
   state.e2ee = state.uploadEnabled ? Boolean(upload?.e2ee) : false;
@@ -585,16 +657,16 @@ function showShare({ link = '', title = 'Upload Complete', sub = 'Share this lin
 }
 
 function resetToMain() {
-  state.file = null;
+  stopP2P();
+  state.files = [];
   state.fileTooLargeForStandard = false;
   updateFileUI();
-  els.tagline.textContent = 'Send a file securely, or enter a sharing code to receive one.';
+  els.tagline.textContent = 'Send files securely, or enter a sharing code to receive.';
   showPanels('main');
   els.shareLink.value = '';
   els.p2pLink.value = '';
   els.progressFill.style.width = '0%';
   els.progressBytes.textContent = '0 / 0';
-  stopP2P();
   updateStartEnabled();
 }
 
@@ -632,32 +704,39 @@ function showQRModal(url) {
 }
 
 function copyToClipboard(value) {
-  return navigator.clipboard?.writeText(value).catch(() => {
-    // fallback
-    const ta = document.createElement('textarea');
-    ta.value = value;
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-  });
+  if (navigator.clipboard) {
+    return navigator.clipboard.writeText(value).catch(() => {
+      // fallback
+      copyToClipboardFallback(value);
+    });
+  }
+  // navigator.clipboard unavailable (insecure context)
+  copyToClipboardFallback(value);
+  return Promise.resolve();
+}
+
+function copyToClipboardFallback(value) {
+  const ta = document.createElement('textarea');
+  ta.value = value;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
 }
 
 async function startStandardUpload() {
   if (!state.uploadEnabled) {
-    showToast('Standard uploads are disabled on this server.');
+    showToast('Standard uploads are disabled on this server.', 'warning');
     return;
   }
 
-  const file = state.file;
-  if (!file) {
-    showToast('Select a file first.');
+  const files = state.files;
+  if (!files.length) {
+    showToast('Select at least one file first.', 'warning');
     return;
   }
-
-  els.tagline.textContent = 'Standard Upload';
 
   // Check if E2EE is available - show warning if not
   const hasE2EE = state.uploadEnabled && state.e2ee && window.isSecureContext;
@@ -671,53 +750,78 @@ async function startStandardUpload() {
     ? state.maxSizeMB * 1000 * 1000
     : null;
   if (maxBytes) {
-    const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
-    const estimatedBytes = estimateTotalUploadSizeBytes(file.size, totalChunks, encrypt);
-    if (estimatedBytes > maxBytes) {
+    let totalEstimated = 0;
+    for (const f of files) {
+      const totalChunks = Math.ceil(f.size / DEFAULT_CHUNK_SIZE);
+      totalEstimated += estimateTotalUploadSizeBytes(f.size, totalChunks, encrypt);
+    }
+    if (totalEstimated > maxBytes) {
       if (state.p2pEnabled && state.p2pSecureOk) {
         setMode('p2p');
-        showToast('File exceeds the server upload limit — using direct transfer.');
+        showToast('Files exceed the server upload limit — using direct transfer.');
         return startP2PSendFlow();
       }
-      showToast('File exceeds the server upload limit and cannot be uploaded.');
+      showToast('Files exceed the server upload limit and cannot be uploaded.', 'danger');
       return;
     }
   }
 
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+
   if (!validateLifetimeInput()) {
-    showToast('File lifetime exceeds server limits.');
+    showToast('File lifetime exceeds server limits.', 'danger');
     return;
   }
 
   const lifetimeMs = lifetimeMsFromUI();
+  els.tagline.textContent = 'Standard Upload';
 
-  showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'cloud_upload', iconColor: 'text-primary' });
+  showProgress({ title: 'Uploading', sub: 'Preparing...', percent: 0, doneBytes: 0, totalBytes: totalSize, icon: 'cloud_upload', iconColor: 'text-primary' });
 
   try {
-    const session = await coreClient.uploadFile({
-      host: location.hostname,
-      port: location.port ? Number(location.port) : undefined,
-      secure: location.protocol === 'https:',
-      file,
+    const session = await coreClient.uploadFiles({
+      files,
       encrypt,
       lifetimeMs,
       maxDownloads: (() => {
         const val = parseInt(els.maxDownloadsValue.value, 10);
         return (Number.isInteger(val) && val >= 0) ? val : 1;
       })(),
-      onProgress: ({ phase, text, percent }) => {
+      onProgress: ({ phase, text, percent, currentFileName }) => {
         const p = (typeof percent === 'number') ? percent : 0;
+        const sub = currentFileName ? `${text || phase} — ${currentFileName}` : (text || phase);
+
+        // Update title and store progress for visibility handler
+        updateTitleProgress(p);
+        currentTransferProgress = {
+          percent: p,
+          doneBytes: Math.floor((p / 100) * totalSize),
+          totalBytes: totalSize,
+          showProgress: (pct, done, total) => {
+            showProgress({
+              title: 'Uploading',
+              sub,
+              percent: pct,
+              doneBytes: done,
+              totalBytes: total,
+              icon: 'cloud_upload',
+              iconColor: 'text-primary',
+            });
+          }
+        };
+
         showProgress({
           title: 'Uploading',
-          sub: text || phase,
+          sub,
           percent: p,
-          doneBytes: Math.floor((p / 100) * file.size),
-          totalBytes: file.size,
+          doneBytes: Math.floor((p / 100) * totalSize),
+          totalBytes: totalSize,
           icon: 'cloud_upload',
           iconColor: 'text-primary',
         });
       },
       onCancel: () => {
+        resetTitleProgress();
         showToast('Upload cancelled.', 'warning');
         resetToMain();
       },
@@ -729,6 +833,7 @@ async function startStandardUpload() {
 
     // Wire up cancel button
     els.cancelStandardUpload.onclick = () => {
+      resetTitleProgress();
       session.cancel('User cancelled upload.');
       state.uploadSession = null;
       els.cancelStandardUpload.style.display = 'none';
@@ -740,12 +845,14 @@ async function startStandardUpload() {
     els.cancelStandardUpload.style.display = 'none';
     state.uploadSession = null;
 
-    showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: file.size, totalBytes: file.size, icon: 'cloud_upload' });
+    resetTitleProgress();
+    showProgress({ title: 'Uploading', sub: 'Upload successful!', percent: 100, doneBytes: totalSize, totalBytes: totalSize, icon: 'cloud_upload' });
     showShare({ link: result.downloadUrl });
   } catch (err) {
     // Hide cancel button on error
     els.cancelStandardUpload.style.display = 'none';
     state.uploadSession = null;
+    resetTitleProgress();
 
     // Check if it was a cancellation (handle both native AbortError and DropgateAbortError)
     if (err?.name === 'AbortError' || err?.code === 'ABORT_ERROR') {
@@ -754,8 +861,8 @@ async function startStandardUpload() {
     }
 
     console.error(err);
-    showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
-    showToast(err?.message || 'Upload failed.');
+    showProgress({ title: 'Upload Failed', sub: err?.message || 'An error occurred during upload.', percent: 0, doneBytes: 0, totalBytes: totalSize, icon: 'error', iconColor: 'text-danger' });
+    showToast(err?.message || 'Upload failed.', 'danger');
   }
 }
 
@@ -777,40 +884,36 @@ async function loadPeerJS() {
 
 async function startP2PSendFlow() {
   if (!state.p2pEnabled) {
-    showToast('Direct transfer is disabled on this server.');
+    showToast('Direct transfer is disabled on this server.', 'warning');
     return;
   }
   if (!state.p2pSecureOk) {
-    showToast('Direct transfer requires HTTPS (or localhost).');
+    showToast('Direct transfer requires HTTPS (or localhost).', 'warning');
     return;
   }
 
-  const file = state.file;
-  if (!file) {
-    showToast('Select a file first.');
+  if (!state.files.length) {
+    showToast('Select at least one file first.', 'warning');
     return;
   }
+
+  const file = state.files.length === 1 ? state.files[0] : state.files;
+  const p2pTotalSize = state.files.reduce((sum, f) => sum + f.size, 0);
 
   // Load PeerJS before starting P2P
   let Peer;
   try {
     Peer = await loadPeerJS();
   } catch (err) {
-    showToast('Failed to load P2P library.');
+    showToast('Failed to load P2P library.', 'danger');
     console.error(err);
     return;
   }
 
   els.tagline.textContent = 'Direct Transfer (P2P)';
-  state.p2pSession = await startP2PSend({
+  state.p2pSession = await coreClient.p2pSend({
     file,
     Peer,
-    host: location.hostname,
-    port: location.port ? Number(location.port) : undefined,
-    secure: location.protocol === 'https:',
-    serverInfo: state.info,
-    peerjsPath: state.peerjsPath,
-    iceServers: state.iceServers,
     onCode: (id) => {
       showPanels('p2pwait');
       // Reset visibility of share elements for new session
@@ -842,41 +945,55 @@ async function startP2PSendFlow() {
         setHidden(els.qrP2PLink, true);
       } else if (phase === 'transferring') {
         // Switch to progress card when transfer actually starts
-        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'sync_alt', iconColor: 'text-primary' });
         // Show P2P cancel button
         els.cancelP2PSend.style.display = 'inline-block';
         els.cancelStandardUpload.style.display = 'none';
       } else {
-        // Default behavior for other statuses
-        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'sync_alt', iconColor: 'text-primary' });
+        // Default behaviour for other statuses
+        showProgress({ title: 'Sending...', sub: message, percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'sync_alt', iconColor: 'text-primary' });
       }
     },
     onProgress: ({ processedBytes, totalBytes, percent }) => {
+      // Update title and store progress for visibility handler
+      updateTitleProgress(percent);
+      currentTransferProgress = {
+        percent,
+        doneBytes: processedBytes,
+        totalBytes,
+        showProgress: (pct, done, total) => {
+          showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent: pct, doneBytes: done, totalBytes: total, icon: 'sync_alt', iconColor: 'text-primary' });
+        }
+      };
+
       showProgress({ title: 'Sending...', sub: 'Keep this tab open until the transfer completes.', percent, doneBytes: processedBytes, totalBytes, icon: 'sync_alt', iconColor: 'text-primary' });
     },
     onComplete: () => {
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
       stopP2P();
       showShare({
         title: 'Transfer Complete',
-        sub: 'Your recipient has received the file.',
+        sub: `Your recipient has received the file${Array.isArray(file) ? 's' : ''}.`,
         showLinkGroup: false,
       });
     },
     onError: (err) => {
       console.error(err);
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
-      showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'error', iconColor: 'text-danger' });
+      showProgress({ title: 'Transfer Failed', sub: err?.message || 'An error occurred during transfer.', percent: 0, doneBytes: 0, totalBytes: p2pTotalSize, icon: 'error', iconColor: 'text-danger' });
       stopP2P();
     },
     onDisconnect: () => {
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
-      showProgress({ title: 'Receiver Disconnected', sub: 'The receiver closed their browser or cancelled the transfer.', percent: 0, doneBytes: 0, totalBytes: file.size, icon: 'link_off', iconColor: 'text-warning' });
-      stopP2P();
+      showToast('The receiver disconnected.', 'warning');
+      resetToMain();
     },
     onCancel: (evt) => {
+      resetTitleProgress();
       els.cancelP2PSend.style.display = 'none';
-      stopP2P();
       const msg = evt?.cancelledBy === 'receiver'
         ? 'The receiver cancelled the transfer.'
         : 'Transfer cancelled.';
@@ -885,17 +1002,19 @@ async function startP2PSendFlow() {
     },
   });
 
-  els.copyP2PLink.onclick = () => copyToClipboard(els.p2pLink.value).then(() => showToast('Copied link.'));
+  els.copyP2PLink.onclick = () => copyToClipboard(els.p2pLink.value).then(() => showToast('Copied link.', 'success'));
   els.qrP2PLink.onclick = () => showQRModal(els.p2pLink.value);
   els.cancelP2P.onclick = () => {
+    resetTitleProgress();
     stopP2P();
     showToast('Transfer cancelled.', 'warning');
     resetToMain();
   };
   els.cancelP2PSend.onclick = () => {
-    if (state.p2pSession) {
-      state.p2pSession.stop();
-    }
+    resetTitleProgress();
+    stopP2P();
+    showToast('Transfer cancelled.', 'warning');
+    resetToMain();
   };
 }
 
@@ -909,10 +1028,10 @@ function wireUI() {
   });
 
   els.fileInput?.addEventListener('change', () => {
-    const f = els.fileInput.files?.[0];
-    if (!f) return;
-    handleFileSelection(f);
-    // Reset the input so the same file can be selected again
+    const fileList = els.fileInput.files;
+    if (!fileList || !fileList.length) return;
+    handleFileSelection(fileList);
+    // Reset the input so the same files can be selected again
     els.fileInput.value = '';
   });
 
@@ -930,9 +1049,9 @@ function wireUI() {
     });
   });
   els.dropzone?.addEventListener('drop', (e) => {
-    const f = e.dataTransfer?.files?.[0];
-    if (!f) return;
-    handleFileSelection(f);
+    const fileList = e.dataTransfer?.files;
+    if (!fileList || !fileList.length) return;
+    handleFileSelection(fileList);
   });
 
   // Mode toggles
@@ -993,13 +1112,13 @@ function wireUI() {
       else await startP2PSendFlow();
     } catch (err) {
       console.error(err);
-      showToast(err?.message || 'Something went wrong.');
+      showToast(err?.message || 'Something went wrong.', 'danger');
       resetToMain();
     }
   });
 
   // Share actions
-  els.copyShare?.addEventListener('click', () => copyToClipboard(els.shareLink.value).then(() => showToast('Copied link.')));
+  els.copyShare?.addEventListener('click', () => copyToClipboard(els.shareLink.value).then(() => showToast('Copied link.', 'success')));
   els.qrShare?.addEventListener('click', () => showQRModal(els.shareLink.value));
   els.newUpload?.addEventListener('click', resetToMain);
 
@@ -1011,9 +1130,6 @@ function wireUI() {
     setDisabled(els.codeGo, true);
     try {
       const result = await coreClient.resolveShareTarget(value, {
-        host: location.hostname,
-        port: location.port ? Number(location.port) : undefined,
-        secure: location.protocol === 'https:',
         timeoutMs: 5000,
       });
       if (!result?.valid || !result?.target) {
@@ -1056,7 +1172,7 @@ async function init() {
   } catch (err) {
     console.error(err);
     els.maxUploadHint.textContent = 'Could not load server info.';
-    showToast('Could not load server info.');
+    showToast('Could not load server info.', 'warning');
   }
 
   // Defaults

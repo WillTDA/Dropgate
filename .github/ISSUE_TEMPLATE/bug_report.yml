@@ -1,0 +1,82 @@
+name: Bug Report
+description: Report a bug or unexpected behaviour
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+      description: What actually happened?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Transfer Protocol
+      description: Which protocol were you using?
+      options:
+        - Upload (Standard)
+        - P2P (Direct Transfer)
+        - Both
+        - N/A
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Server Version
+      description: The Dropgate server version (shown in /api/info or the footer).
+      placeholder: e.g. 3.0.0
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: e.g. Chrome 130, Firefox 133, Safari 18
+
+  - type: dropdown
+    id: context
+    attributes:
+      label: Secure Context
+      description: Were you accessing the server over HTTPS?
+      options:
+        - "Yes (HTTPS)"
+        - "No (HTTP)"
+        - Not sure
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Screenshots
+      description: Paste any relevant browser console output, server logs, or screenshots.
+      render: text

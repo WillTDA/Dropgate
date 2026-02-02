@@ -1,4 +1,4 @@
-import { DropgateClient, getServerInfo, lifetimeToMs, parseServerUrl } from './dropgate-core.js';
+import { DropgateClient, lifetimeToMs } from './dropgate-core.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -12,8 +12,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const fileInput = document.getElementById('file-input');
         const selectFileBtn = document.getElementById('select-file-btn');
         const fileChosen = document.getElementById('file-chosen');
-        const fileChosenName = document.getElementById('file-chosen-name');
-        const fileChosenSize = document.getElementById('file-chosen-size');
+        const fileChosenSummary = document.getElementById('file-chosen-summary');
+        const fileChosenList = document.getElementById('file-chosen-list');
+        const fileChosenTotal = document.getElementById('file-chosen-total');
         const maxUploadHint = document.getElementById('max-upload-hint');
         const serverUrlInput = document.getElementById('server-url');
         const testConnectionBtn = document.getElementById('test-connection-btn');
@@ -21,7 +22,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const fileLifetimeValueInput = document.getElementById('file-lifetime-value');
         const fileLifetimeUnitSelect = document.getElementById('file-lifetime-unit');
         const fileLifetimeHelp = document.getElementById('file-lifetime-help');
-        const maxDownloadsSection = document.getElementById('max-downloads-section');
         const maxDownloadsValue = document.getElementById('max-downloads-value');
         const maxDownloadsHelp = document.getElementById('max-downloads-help');
 
@@ -40,22 +40,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         const copyBtn = document.getElementById('copy-btn');
 
         let serverCapabilities = null;
-        let selectedFile = null;
+        let selectedFiles = [];
         /** @type {{compatible:boolean, message?:string}} */
         let lastServerCheck = { compatible: false, message: '' };
         let activeUploadSession = null;
 
         // --- Core client (shared logic for Electron + Web UI) ---
         const clientVersion = await window.electronAPI.getClientVersion();
-        const coreClient = new DropgateClient({
-            clientVersion,
-            logger: (level, message, meta) => {
-                // Keep logs useful, but not spammy.
-                if (level === 'debug') return;
-                const fn = console[level] || console.log;
-                fn.call(console, `[core] ${message}`, meta ?? '');
+        /** @type {DropgateClient|null} */
+        let coreClient = null;
+
+        /**
+         * Create or recreate the core client for a given server URL.
+         * Must be called whenever the server URL changes.
+         */
+        function createClient(serverUrl) {
+            if (!serverUrl) {
+                coreClient = null;
+                return;
             }
-        });
+            coreClient = new DropgateClient({
+                clientVersion,
+                server: serverUrl,
+                fallbackToHttp: true,
+            });
+        }
 
         function isFile(file) {
             return new Promise((resolve) => {
@@ -83,7 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!Number.isFinite(bytes)) return '0 bytes';
             if (bytes === 0) return '0 bytes';
             const k = 1000;
-            const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+            const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             const v = bytes / Math.pow(k, i);
             return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
@@ -104,6 +113,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settings.maxDownloads) {
             maxDownloadsValue.value = settings.maxDownloads;
         }
+
+        // Create initial client with loaded server URL
+        createClient(serverUrlInput.value.trim());
 
         await checkServerCompatibility();
 
@@ -139,7 +151,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         maxDownloadsValue.addEventListener('blur', () => updateMaxDownloadsSettings());
 
         selectFileBtn.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length) {
+                handleFiles(Array.from(e.target.files));
+                fileInput.value = '';
+            }
+        });
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -158,21 +175,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             const files = e.dataTransfer.files;
             if (!files || files.length === 0) return;
 
-            const droppedFile = files[0];
+            // Filter out directories
+            const validFiles = [];
+            for (const f of Array.from(files)) {
+                if (await isFile(f)) {
+                    validFiles.push(f);
+                }
+            }
 
-            // Check if the dropped item is a file
-            const isValidFile = await isFile(droppedFile);
-
-            if (isValidFile) {
-                handleFile(droppedFile);
-            } else {
+            if (validFiles.length === 0) {
                 uploadStatus.textContent = 'Folders cannot be uploaded.';
                 uploadStatus.className = 'form-text mt-1 text-warning';
-                selectedFile = null;
-                fileChosen.hidden = true;
-                fileInput.value = '';
-                uploadBtn.disabled = true;
+                return;
             }
+
+            handleFiles(validFiles);
         });
 
         testConnectionBtn.addEventListener('click', async () => {
@@ -190,16 +207,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             connectionStatus.className = 'form-text mt-1 text-muted';
 
             try {
-                const serverTarget = parseServerUrl(serverUrl);
-                await getServerInfo({ ...serverTarget, timeoutMs: 5000 });
+                // Recreate client with current URL (includes HTTP fallback)
+                createClient(serverUrl);
+                await coreClient.connect({ timeoutMs: 5000 });
 
-                if (serverTarget.secure) {
+                const { secure } = coreClient.serverTarget;
+                if (secure) {
                     connectionStatus.textContent = `Connection successful (HTTPS).`;
                     connectionStatus.className = 'form-text mt-1 text-success';
                 } else {
                     connectionStatus.textContent = `Connection successful (HTTP) — connection is insecure.`;
                     connectionStatus.className = 'form-text mt-1 text-warning';
                 }
+
+                // Update input to reflect resolved URL (may have changed due to HTTP fallback)
+                serverUrlInput.value = coreClient.baseUrl;
 
                 await checkServerCompatibility();
             } catch (error) {
@@ -264,7 +286,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.electronAPI.onFileOpened((file) => {
             if (file && file.data) {
                 const newFile = new File([file.data], file.name, { type: '' });
-                handleFile(newFile);
+                handleFiles([newFile]);
             }
         });
 
@@ -275,7 +297,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (details && details.data) {
                 console.log('File size:', details.data.byteLength, 'bytes');
                 const file = new File([details.data], details.name);
-                selectedFile = file;
+                selectedFiles = [file];
                 // Encryption is auto-determined by server capabilities later
 
                 const settings = await window.electronAPI.getSettings();
@@ -290,6 +312,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     return;
                 }
                 serverUrlInput.value = settings.serverURL;
+                createClient(settings.serverURL);
 
                 console.log('Starting upload...');
                 // Trigger the centralised upload function
@@ -299,36 +322,77 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        function handleFile(file) {
+        function handleFiles(newFiles) {
             // Clear any previous error messages
             uploadStatus.textContent = '';
 
-            if (!file) {
-                selectedFile = null;
-                fileChosen.hidden = true;
-                fileInput.value = '';
-                uploadBtn.disabled = true;
+            if (!newFiles || newFiles.length === 0) {
                 return;
             }
 
-            if (file.size === 0) {
-                uploadStatus.textContent = 'Error: Cannot upload empty (0 byte) files.';
-                uploadStatus.className = 'form-text mt-1 text-danger';
-                selectedFile = null;
-                fileChosen.hidden = true;
-                fileInput.value = '';
-                uploadBtn.disabled = true;
-                return;
+            // Filter out empty files
+            const valid = newFiles.filter(f => f.size > 0);
+            const skipped = newFiles.length - valid.length;
+            if (skipped > 0) {
+                uploadStatus.textContent = `Skipped ${skipped} empty (0 byte) file${skipped > 1 ? 's' : ''}.`;
+                uploadStatus.className = 'form-text mt-1 text-warning';
             }
 
-            selectedFile = file;
-            fileChosenName.textContent = file.name;
-            fileChosenSize.textContent = formatBytes(file.size);
-            fileChosen.hidden = false;
+            if (valid.length === 0) return;
+
+            // Append to existing selection
+            selectedFiles = [...selectedFiles, ...valid];
+            updateFileListUI();
             linkSection.style.display = 'none';
 
             // Only enable upload if all conditions are met
             updateUploadButtonState();
+        }
+
+        function updateFileListUI() {
+            if (!selectedFiles.length) {
+                fileChosen.hidden = true;
+                return;
+            }
+
+            const count = selectedFiles.length;
+            fileChosenSummary.textContent = count === 1 ? '1 file selected' : `${count} files selected`;
+
+            fileChosenList.innerHTML = '';
+            for (let i = 0; i < selectedFiles.length; i++) {
+                const f = selectedFiles[i];
+                const li = document.createElement('li');
+                li.className = 'd-flex align-items-center small file-list-item';
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'text-truncate me-2';
+                nameSpan.textContent = f.name;
+                nameSpan.title = f.name;
+                const rightSide = document.createElement('span');
+                rightSide.className = 'd-flex align-items-center gap-2 flex-shrink-0 ms-auto';
+                const sizeSpan = document.createElement('span');
+                sizeSpan.className = 'text-body-secondary';
+                sizeSpan.textContent = formatBytes(f.size);
+                rightSide.appendChild(sizeSpan);
+                const removeBtn = document.createElement('button');
+                removeBtn.type = 'button';
+                removeBtn.className = 'file-remove-btn';
+                removeBtn.title = 'Remove file';
+                removeBtn.innerHTML = '<span class="material-icons-round" style="font-size: 14px;">close</span>';
+                removeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    selectedFiles.splice(i, 1);
+                    updateFileListUI();
+                    updateUploadButtonState();
+                });
+                rightSide.appendChild(removeBtn);
+                li.appendChild(nameSpan);
+                li.appendChild(rightSide);
+                fileChosenList.appendChild(li);
+            }
+
+            const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+            fileChosenTotal.textContent = `Total: ${formatBytes(totalSize)}`;
+            fileChosen.hidden = false;
         }
 
         // Trigger for uploads started from the UI
@@ -350,8 +414,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (isNaN(value) || value <= 0) fileLifetimeValueInput.value = 0.5;
             }
 
-            if (!selectedFile) {
-                window.electronAPI.uploadFinished({ status: 'error', error: 'File is missing.' });
+            if (!selectedFiles.length) {
+                window.electronAPI.uploadFinished({ status: 'error', error: 'No files selected.' });
                 return;
             }
 
@@ -364,8 +428,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            const serverUrl = serverUrlInput.value.trim();
-            const isTargetSecure = serverUrl.startsWith('https://');
+            const isTargetSecure = coreClient?.baseUrl?.startsWith('https://') ?? false;
             const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
 
             // Check if E2EE is available - show warning if not
@@ -388,10 +451,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             saveSettings();
 
             try {
-                const serverTarget = parseServerUrl(serverUrlInput.value.trim());
-                const session = await coreClient.uploadFile({
-                    ...serverTarget,
-                    file: selectedFile,
+                const session = await coreClient.uploadFiles({
+                    files: selectedFiles.length === 1 ? selectedFiles[0] : selectedFiles,
                     lifetimeMs,
                     maxDownloads: (() => {
                         const val = parseInt(maxDownloadsValue.value, 10);
@@ -400,7 +461,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     encrypt: encrypt,
                     onProgress: (evt) => {
                         const payload = {};
-                        if (evt?.text) payload.text = evt.text;
+                        if (evt?.text) {
+                            payload.text = evt.currentFileName
+                                ? `${evt.text} — ${evt.currentFileName}`
+                                : evt.text;
+                        }
                         if (evt?.percent !== undefined) payload.percent = evt.percent;
                         if (Object.keys(payload).length) window.electronAPI.uploadProgress(payload);
                     },
@@ -465,8 +530,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             // In Electron renderer, location.protocol serves file:// usually or http/https if loaded remotely.
             // But here we are making requests to 'serverUrlInput.value'.
             // So we need to check the active server URL protocol.
-            const serverUrl = serverUrlInput.value.trim();
-            const isTargetSecure = serverUrl.startsWith('https://');
+            const isTargetSecure = coreClient?.baseUrl?.startsWith('https://') ?? false;
             const hasE2EE = serverCapabilities?.upload?.e2ee && isTargetSecure;
 
             if (hasE2EE) {
@@ -555,41 +619,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
             try {
-                // Auto-detect protocol if missing
-                let targetUrl = inputUrl;
-                let autoAddedProtocol = false;
+                // Recreate client if URL changed (client handles HTTP fallback internally)
+                createClient(inputUrl);
+                const compat = await coreClient.connect({ timeoutMs: 5000 });
 
-                if (!inputUrl.match(/^https?:\/\//i)) {
-                    targetUrl = 'https://' + inputUrl;
-                    autoAddedProtocol = true;
-                }
-
-                let serverTarget = parseServerUrl(targetUrl);
-                let compat;
-
-                try {
-                    compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
-
-                    // If we auto-added https and it worked, update the input
-                    if (autoAddedProtocol) {
-                        serverUrlInput.value = targetUrl;
-                        // serverTarget is already correct
-                    }
-                } catch (err) {
-                    // If we guessed HTTPS and it failed, try HTTP
-                    if (autoAddedProtocol) {
-                        console.log('HTTPS auto-detect failed, falling back to HTTP...');
-                        targetUrl = 'http://' + inputUrl;
-                        serverTarget = parseServerUrl(targetUrl);
-                        compat = await coreClient.checkCompatibility({ ...serverTarget, timeoutMs: 5000 });
-
-                        // If this worked, update the input
-                        serverUrlInput.value = targetUrl;
-                    } else {
-                        // User specified protocol or we failed both
-                        throw err;
-                    }
-                }
+                // Update input to reflect resolved URL (may have changed due to HTTP fallback or protocol auto-detect)
+                serverUrlInput.value = coreClient.baseUrl;
 
                 const { serverInfo } = compat;
 
@@ -621,6 +656,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     uploadStatus.textContent = compat.message;
                     uploadStatus.className = 'form-text mt-1 text-danger';
                     lastServerCheck = { compatible: false, message: compat.message };
+                    updateUploadabilityState(false, compat.message);
                     return lastServerCheck;
                 }
 
@@ -742,7 +778,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const isLifetimeValid = validateLifetimeInput();
             const isDownloadsValid = validateMaxDownloadsInput();
             const isServerCompatible = lastServerCheck.compatible;
-            const isFileSelected = !!selectedFile;
+            const isFileSelected = selectedFiles.length > 0;
 
             if (isFileSelected && isServerCompatible && isLifetimeValid && isDownloadsValid) {
                 uploadBtn.disabled = false;
@@ -817,12 +853,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
             }
 
-            // Update max upload size hint
+            // Update size limit hint based on bundle size mode
             const maxSizeBytes = serverCapabilities.upload.maxSizeMB * 1000 * 1000;
+            const sizeMode = serverCapabilities.upload.bundleSizeMode || 'total';
+            const sizeLabel = sizeMode === 'per-file' ? 'Max single file size' : 'Max upload size';
             if (maxSizeBytes === 0) {
                 maxUploadHint.textContent = 'You can upload files of any size.';
             } else {
-                maxUploadHint.textContent = `Max upload size: ${formatBytes(maxSizeBytes)}.`;
+                maxUploadHint.textContent = `${sizeLabel}: ${formatBytes(maxSizeBytes)}.`;
             }
 
             // Update Security Status UI (Auto-managed E2EE)
@@ -866,8 +904,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         function resetUI(clearFile = true) {
             uploadBtn.textContent = 'Upload';
             if (clearFile) {
-                selectedFile = null;
-                fileChosen.hidden = true;
+                selectedFiles = [];
+                updateFileListUI();
                 fileInput.value = '';
                 uploadBtn.disabled = true;
             } else {

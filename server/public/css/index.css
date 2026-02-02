@@ -243,6 +243,38 @@ select:disabled {
   line-height: 1;
 }
 
+/* File list styles */
+.file-list-item {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.file-list-item:last-child {
+  border-bottom: none;
+}
+
+.file-remove-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--bs-border-color);
+  background: var(--bs-body-bg);
+  color: var(--bs-secondary-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+  flex-shrink: 0;
+}
+
+.file-remove-btn:hover {
+  background-color: var(--bs-danger);
+  border-color: var(--bs-danger);
+  color: #fff;
+}
+
 /* Make modal content breathe on tiny screens */
 @media (max-width: 420px) {
   .modal-content {

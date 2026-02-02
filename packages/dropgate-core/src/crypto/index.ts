@@ -1,20 +1,36 @@
 import type { CryptoAdapter } from '../types.js';
 import { arrayBufferToBase64 } from '../utils/base64.js';
+import { sha256Fallback } from './sha256-fallback.js';
 
 /**
- * Compute SHA-256 hash of data and return as hex string.
+ * Convert a raw SHA-256 digest ArrayBuffer to a hex string.
  */
-export async function sha256Hex(
-  cryptoObj: CryptoAdapter,
-  data: ArrayBuffer
-): Promise<string> {
-  const hashBuffer = await cryptoObj.subtle.digest('SHA-256', data);
+function digestToHex(hashBuffer: ArrayBuffer): string {
   const arr = new Uint8Array(hashBuffer);
   let hex = '';
   for (let i = 0; i < arr.length; i++) {
     hex += arr[i].toString(16).padStart(2, '0');
   }
   return hex;
+}
+
+/**
+ * Compute SHA-256 hash of data and return as hex string.
+ *
+ * Uses crypto.subtle when available. Falls back to a pure-JS
+ * implementation for integrity hashing on insecure contexts.
+ * The fallback MUST NOT be used for encryption operations.
+ */
+export async function sha256Hex(
+  cryptoObj: CryptoAdapter,
+  data: ArrayBuffer
+): Promise<string> {
+  if (cryptoObj?.subtle) {
+    const hashBuffer = await cryptoObj.subtle.digest('SHA-256', data);
+    return digestToHex(hashBuffer);
+  }
+  // Fallback: pure-JS SHA-256 for integrity verification only
+  return digestToHex(sha256Fallback(data));
 }
 
 /**

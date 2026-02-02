@@ -36,6 +36,19 @@ const store = new Store();
 let mainWindow = null;
 let uploadQueue = [];
 let isUploading = false;
+let activeUploadNotification = null;
+
+function showNotification(title, body) {
+    const notification = new Notification({ title, body });
+    notification.on('click', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.show();
+            mainWindow.focus();
+        }
+    });
+    notification.show();
+    return notification;
+}
 
 // Auto-updater configuration
 autoUpdater.autoDownload = false;
@@ -369,6 +382,14 @@ ipcMain.on('upload-progress', (event, progressData) => {
     // Send to main window if it exists
     if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('update-ui', { type: 'progress', data: progressData });
+
+        // Update window title and taskbar progress
+        if (progressData.percent !== undefined) {
+            mainWindow.setTitle(`Dropgate Client \u2014 Uploading ${progressData.percent.toFixed(0)}%`);
+            mainWindow.setProgressBar(progressData.percent / 100);
+        } else if (progressData.text) {
+            mainWindow.setTitle(`Dropgate Client \u2014 ${progressData.text}`);
+        }
     }
 
     // ALSO send to the window that's uploading (might be a background window)
@@ -380,6 +401,22 @@ ipcMain.on('upload-progress', (event, progressData) => {
 
 ipcMain.on('upload-finished', (event, result) => {
     log('Upload finished:', result.status);
+
+    // Reset window title and taskbar progress
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setTitle('Dropgate Client');
+        mainWindow.setProgressBar(result.status === 'success' ? 1 : 0,
+            { mode: result.status === 'success' ? 'none' : 'error' });
+        setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1);
+        }, 3000);
+    }
+
+    // Close the active upload notification
+    if (activeUploadNotification) {
+        activeUploadNotification.close();
+        activeUploadNotification = null;
+    }
 
     const uploaderWindow = BrowserWindow.fromWebContents(event.sender);
     const isFocused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused();
@@ -394,10 +431,7 @@ ipcMain.on('upload-finished', (event, result) => {
 
         // Show notification if main window doesn't exist or isn't focused
         if (!mainWindow || !isFocused) {
-            new Notification({
-                title: 'Upload Successful',
-                body: 'Link copied to clipboard.'
-            }).show();
+            showNotification('Upload Successful', 'Link copied to clipboard.');
         }
     } else {
         // Send to main window if it exists
@@ -407,10 +441,7 @@ ipcMain.on('upload-finished', (event, result) => {
 
         // Show notification if main window doesn't exist or isn't focused
         if (!mainWindow || !isFocused) {
-            new Notification({
-                title: 'Upload Failed',
-                body: result.error || 'An unknown error occurred.'
-            }).show();
+            showNotification('Upload Failed', result.error || 'An unknown error occurred.');
         }
     }
 
@@ -433,6 +464,18 @@ ipcMain.on('upload-finished', (event, result) => {
 
 ipcMain.on('cancel-upload', (event) => {
     log('Cancel upload requested');
+
+    // Reset window title and taskbar progress
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setTitle('Dropgate Client');
+        mainWindow.setProgressBar(-1);
+    }
+
+    // Close the active upload notification
+    if (activeUploadNotification) {
+        activeUploadNotification.close();
+        activeUploadNotification = null;
+    }
 
     // Forward cancellation trigger to the renderer that requested it
     const uploaderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -604,10 +647,7 @@ ipcMain.on('renderer-ready', (event) => {
 
             log('Sending background-upload-start with file:', fileName, 'size:', fileData.length);
 
-            new Notification({
-                title: 'Upload Started',
-                body: `Uploading ${fileName}...`
-            }).show();
+            activeUploadNotification = showNotification('Upload Started', `Uploading ${fileName}...`);
 
             senderWindow.webContents.send('background-upload-start', {
                 name: fileName,
@@ -618,10 +658,7 @@ ipcMain.on('renderer-ready', (event) => {
             pendingBackgroundUploads.delete(windowId);
         } catch (error) {
             console.error('Failed to read file for background upload:', error);
-            new Notification({
-                title: 'Upload Failed',
-                body: 'Could not read the selected file.'
-            }).show();
+            showNotification('Upload Failed', 'Could not read the selected file.');
 
             if (senderWindow && !senderWindow.isDestroyed()) {
                 senderWindow.destroy();
@@ -643,10 +680,7 @@ function triggerBackgroundUpload(filePath) {
 
     if (!fs.existsSync(filePath)) {
         console.error('File does not exist!');
-        new Notification({
-            title: 'Upload Failed',
-            body: 'File not found.'
-        }).show();
+        showNotification('Upload Failed', 'File not found.');
         isUploading = false;
         processUploadQueue();
         return;
@@ -685,10 +719,7 @@ function triggerBackgroundUpload(filePath) {
 
     // backgroundWindow.webContents.openDevTools();
 
-    new Notification({
-        title: 'Initialising Upload',
-        body: `Preparing ${path.basename(filePath)}...`
-    }).show();
+    activeUploadNotification = showNotification('Initialising Upload', `Preparing ${path.basename(filePath)}...`);
 
     log('Loading index.html into background window');
     backgroundWindow.loadFile(path.join(__dirname, 'index.html'));

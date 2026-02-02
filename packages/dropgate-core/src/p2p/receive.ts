@@ -1,13 +1,41 @@
 import { DropgateValidationError, DropgateNetworkError } from '../errors.js';
+import { sleep } from '../utils/network.js';
 import type { P2PReceiveOptions, P2PReceiveSession, P2PReceiveState, DataConnection } from './types.js';
 import { isP2PCodeLike } from './utils.js';
 import { buildPeerOptions, resolvePeerConfig } from './helpers.js';
+import {
+  P2P_PROTOCOL_VERSION,
+  P2P_END_ACK_RETRY_DELAY_MS,
+  isP2PMessage,
+  type P2PChunkMessage,
+  type P2PFileListMessage,
+} from './protocol.js';
+
+/**
+ * Allowed state transitions to prevent invalid state changes.
+ */
+const ALLOWED_TRANSITIONS: Record<P2PReceiveState, P2PReceiveState[]> = {
+  initializing: ['connecting', 'closed'],
+  connecting: ['handshaking', 'closed', 'cancelled'],
+  handshaking: ['negotiating', 'closed', 'cancelled'],
+  negotiating: ['transferring', 'closed', 'cancelled'],
+  transferring: ['completed', 'closed', 'cancelled'],
+  completed: ['closed'],
+  cancelled: ['closed'],
+  closed: [],
+};
 
 /**
  * Start a direct transfer (P2P) receiver session.
  *
  * IMPORTANT: Consumer must provide the PeerJS Peer constructor and handle file writing.
  * This removes DOM coupling (no streamSaver).
+ *
+ * Protocol v2 features:
+ * - Explicit version handshake
+ * - Chunk-level acknowledgments for flow control
+ * - Multiple end-ack sends for reliability
+ * - Stream-through design for unlimited file sizes
  *
  * Example:
  * ```js
@@ -51,6 +79,8 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     onMeta,
     onData,
     onProgress,
+    onFileStart,
+    onFileEnd,
     onComplete,
     onError,
     onDisconnect,
@@ -103,11 +133,31 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   let total = 0;
   let received = 0;
   let currentSessionId: string | null = null;
-  let lastProgressSentAt = 0;
-  const progressIntervalMs = 120;
   let writeQueue = Promise.resolve();
   let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   let activeConn: DataConnection | null = null;
+
+  let pendingChunk: P2PChunkMessage | null = null;
+
+  // Multi-file tracking (v3)
+  let fileList: P2PFileListMessage | null = null;
+  let currentFileReceived = 0;
+  let totalReceivedAllFiles = 0;
+
+  /**
+   * Attempt a state transition. Returns true if transition was valid.
+   */
+  const transitionTo = (newState: P2PReceiveState): boolean => {
+    if (!ALLOWED_TRANSITIONS[state].includes(newState)) {
+      console.warn(`[P2P Receive] Invalid state transition: ${state} -> ${newState}`);
+      return false;
+    }
+    state = newState;
+    return true;
+  };
+
+  // Helper to check if session is stopped
+  const isStopped = (): boolean => state === 'closed' || state === 'cancelled';
 
   // Watchdog - detects dead connections during transfer
   const resetWatchdog = (): void => {
@@ -134,7 +184,7 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   // Safe error handler - prevents calling onError after completion or cancellation
   const safeError = (err: Error): void => {
     if (state === 'closed' || state === 'completed' || state === 'cancelled') return;
-    state = 'closed';
+    transitionTo('closed');
     onError?.(err);
     cleanup();
   };
@@ -142,9 +192,11 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   // Safe complete handler - only fires from transferring state
   const safeComplete = (completeData: { received: number; total: number }): void => {
     if (state !== 'transferring') return;
-    state = 'completed';
+    transitionTo('completed');
     onComplete?.(completeData);
-    cleanup();
+    // Don't immediately cleanup - let acks be sent first
+    // The sender will close the connection after receiving ack
+    // Our close handler will call cleanup when that happens
   };
 
   // Cleanup all resources
@@ -181,14 +233,20 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   const stop = (): void => {
     if (state === 'closed' || state === 'cancelled') return;
 
+    // If already completed, just cleanup without callbacks
+    if (state === 'completed') {
+      cleanup();
+      return;
+    }
+
     const wasActive = state === 'transferring';
-    state = 'cancelled';
+    transitionTo('cancelled');
 
     // Notify peer before cleanup
     try {
       // @ts-expect-error - open property may exist on PeerJS connections
       if (activeConn && activeConn.open) {
-        activeConn.send({ t: 'cancelled', message: 'Receiver cancelled the transfer.' });
+        activeConn.send({ t: 'cancelled', reason: 'Receiver cancelled the transfer.' });
       }
     } catch {
       // Best effort
@@ -201,18 +259,34 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
     cleanup();
   };
 
+  // Send chunk acknowledgment
+  const sendChunkAck = (conn: DataConnection, seq: number): void => {
+    try {
+      conn.send({ t: 'chunk_ack', seq, received });
+    } catch {
+      // Ignore send errors
+    }
+  };
+
   peer.on('error', (err: Error) => {
     safeError(err);
   });
 
   peer.on('open', () => {
-    state = 'connecting';
+    transitionTo('connecting');
     const conn = peer.connect(normalizedCode, { reliable: true });
     activeConn = conn;
 
     conn.on('open', () => {
-      state = 'negotiating';
-      onStatus?.({ phase: 'connected', message: 'Waiting for file details...' });
+      transitionTo('handshaking');
+      onStatus?.({ phase: 'connected', message: 'Connected.' });
+
+      // Send our hello immediately
+      conn.send({
+        t: 'hello',
+        protocolVersion: P2P_PROTOCOL_VERSION,
+        sessionId: '',
+      });
     });
 
     conn.on('data', async (data: unknown) => {
@@ -220,22 +294,89 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
         // Reset watchdog on any data received
         resetWatchdog();
 
-        // Handle control messages
-        if (
-          data &&
-          typeof data === 'object' &&
-          !(data instanceof ArrayBuffer) &&
-          !ArrayBuffer.isView(data)
-        ) {
-          const msg = data as {
-            t?: string;
-            sessionId?: string;
-            name?: string;
-            size?: number;
-            message?: string;
-          };
+        // Handle binary data - this is file content
+        if (data instanceof ArrayBuffer || ArrayBuffer.isView(data) ||
+          (typeof Blob !== 'undefined' && data instanceof Blob)) {
 
-          if (msg.t === 'meta') {
+          // Process the binary chunk
+          let bufPromise: Promise<Uint8Array>;
+
+          if (data instanceof ArrayBuffer) {
+            bufPromise = Promise.resolve(new Uint8Array(data));
+          } else if (ArrayBuffer.isView(data)) {
+            bufPromise = Promise.resolve(
+              new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+            );
+          } else if (typeof Blob !== 'undefined' && data instanceof Blob) {
+            bufPromise = data.arrayBuffer().then((buffer) => new Uint8Array(buffer));
+          } else {
+            return;
+          }
+
+          // Queue the write operation
+          const chunkSeq = pendingChunk?.seq ?? -1;
+          pendingChunk = null;
+
+          writeQueue = writeQueue
+            .then(async () => {
+              const buf = await bufPromise;
+
+              // Call consumer's onData handler (stream-through, no buffering)
+              if (onData) {
+                await onData(buf);
+              }
+
+              received += buf.byteLength;
+              currentFileReceived += buf.byteLength;
+              const progressReceived = fileList ? (totalReceivedAllFiles + currentFileReceived) : received;
+              const progressTotal = fileList ? fileList.totalSize : total;
+              const percent = progressTotal ? Math.min(100, (progressReceived / progressTotal) * 100) : 0;
+              if (!isStopped()) onProgress?.({ processedBytes: progressReceived, totalBytes: progressTotal, percent });
+
+              // Send chunk acknowledgment
+              if (chunkSeq >= 0) {
+                sendChunkAck(conn, chunkSeq);
+              }
+            })
+            .catch((err) => {
+              try {
+                conn.send({
+                  t: 'error',
+                  message: (err as Error)?.message || 'Receiver write failed.',
+                });
+              } catch {
+                // Ignore send errors
+              }
+              safeError(err as Error);
+            });
+
+          return;
+        }
+
+        // Handle control messages
+        if (!isP2PMessage(data)) return;
+
+        const msg = data;
+
+        switch (msg.t) {
+          case 'hello':
+            currentSessionId = msg.sessionId || null;
+            transitionTo('negotiating');
+            onStatus?.({ phase: 'waiting', message: 'Waiting for file details...' });
+            break;
+
+          case 'file_list':
+            // v3: Store file list for multi-file transfer
+            fileList = msg as P2PFileListMessage;
+            total = fileList.totalSize;
+            break;
+
+          case 'meta': {
+            // For multi-file: meta comes for each file (first triggers ready, subsequent auto-transition)
+            if (state !== 'negotiating' && !(state === 'transferring' && fileList)) {
+              return;
+            }
+
             // Session ID validation - reject if we're busy with a different session
             if (currentSessionId && msg.sessionId && msg.sessionId !== currentSessionId) {
               try {
@@ -252,16 +393,35 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             }
 
             const name = String(msg.name || 'file');
-            total = Number(msg.size) || 0;
+            const fileSize = Number(msg.size) || 0;
+            const fi = msg.fileIndex;
+
+            // For multi-file subsequent files, reset per-file tracking
+            if (fileList && typeof fi === 'number' && fi > 0) {
+              currentFileReceived = 0;
+              // Don't reset writeQueue or received - they accumulate
+              onFileStart?.({ fileIndex: fi, name, size: fileSize });
+              break; // Already transferring, no need for ready signal
+            }
+
+            // First file (or single file transfer)
             received = 0;
+            currentFileReceived = 0;
+            totalReceivedAllFiles = 0;
+            if (!fileList) {
+              total = fileSize;
+            }
             writeQueue = Promise.resolve();
 
-            // Function to send ready signal - called automatically if autoReady is true,
-            // or passed to onMeta callback for manual invocation if autoReady is false
+            // Function to send ready signal
             const sendReady = (): void => {
-              state = 'transferring';
+              transitionTo('transferring');
               // Start watchdog once we're ready to receive data
               resetWatchdog();
+              // Notify consumer about first file start (for multi-file ZIP assembly)
+              if (fileList) {
+                onFileStart?.({ fileIndex: 0, name, size: fileSize });
+              }
               try {
                 conn.send({ t: 'ready' });
               } catch {
@@ -269,35 +429,77 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               }
             };
 
+            // Build metadata event
+            const metaEvt: Parameters<NonNullable<typeof onMeta>>[0] = { name, total };
+            if (fileList) {
+              metaEvt.fileCount = fileList.fileCount;
+              metaEvt.files = fileList.files.map(f => ({ name: f.name, size: f.size }));
+              metaEvt.totalSize = fileList.totalSize;
+            }
+
             if (autoReady) {
-              onMeta?.({ name, total });
-              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              if (!isStopped()) {
+                onMeta?.(metaEvt);
+                onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              }
               sendReady();
             } else {
               // Pass sendReady function to callback so consumer can trigger transfer start
-              onMeta?.({ name, total, sendReady });
-              onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              metaEvt.sendReady = sendReady;
+              if (!isStopped()) {
+                onMeta?.(metaEvt);
+                onProgress?.({ processedBytes: received, totalBytes: total, percent: 0 });
+              }
             }
-            return;
+            break;
           }
 
-          if (msg.t === 'ping') {
+          case 'chunk':
+            pendingChunk = msg as P2PChunkMessage;
+            break;
+
+          case 'ping':
             // Respond to heartbeat - keeps watchdog alive and confirms we're active
             try {
-              conn.send({ t: 'pong' });
+              conn.send({ t: 'pong', timestamp: Date.now() });
             } catch {
               // Ignore send errors
             }
-            return;
-          }
+            break;
 
-          if (msg.t === 'end') {
+          case 'file_end': {
+            // v3: Current file complete, ack it
             clearWatchdog();
             await writeQueue;
 
-            if (total && received < total) {
+            const feIdx = msg.fileIndex;
+            onFileEnd?.({ fileIndex: feIdx, receivedBytes: currentFileReceived });
+
+            try {
+              conn.send({ t: 'file_end_ack', fileIndex: feIdx, received: currentFileReceived, size: currentFileReceived });
+            } catch {
+              // Ignore send errors
+            }
+
+            totalReceivedAllFiles += currentFileReceived;
+            currentFileReceived = 0;
+
+            // Restart watchdog for next file
+            resetWatchdog();
+            break;
+          }
+
+          case 'end':
+            clearWatchdog();
+            await writeQueue;
+
+            // For multi-file, use totalReceivedAllFiles + any remaining
+            const finalReceived = fileList ? (totalReceivedAllFiles + currentFileReceived) : received;
+            const finalTotal = fileList ? fileList.totalSize : total;
+
+            if (finalTotal && finalReceived < finalTotal) {
               const err = new DropgateNetworkError(
-                'Transfer ended before the full file was received.'
+                'Transfer ended before all data was received.'
               );
               try {
                 conn.send({ t: 'error', message: err.message });
@@ -307,80 +509,39 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
               throw err;
             }
 
+            // Send end_ack immediately so sender can complete
             try {
-              conn.send({ t: 'ack', phase: 'end', received, total });
+              conn.send({ t: 'end_ack', received: finalReceived, total: finalTotal });
             } catch {
               // Ignore send errors
             }
 
-            safeComplete({ received, total });
-            return;
-          }
+            // Mark as completed - protects against close handler race
+            safeComplete({ received: finalReceived, total: finalTotal });
 
-          if (msg.t === 'error') {
-            throw new DropgateNetworkError(msg.message || 'Sender reported an error.');
-          }
-
-          if (msg.t === 'cancelled') {
-            if (state === 'cancelled' || state === 'closed' || state === 'completed') return;
-            state = 'cancelled';
-            onCancel?.({ cancelledBy: 'sender', message: msg.message });
-            cleanup();
-            return;
-          }
-
-          return;
-        }
-
-        // Handle binary data
-        let bufPromise: Promise<Uint8Array>;
-
-        if (data instanceof ArrayBuffer) {
-          bufPromise = Promise.resolve(new Uint8Array(data));
-        } else if (ArrayBuffer.isView(data)) {
-          bufPromise = Promise.resolve(
-            new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-          );
-        } else if (typeof Blob !== 'undefined' && data instanceof Blob) {
-          bufPromise = data.arrayBuffer().then((buffer) => new Uint8Array(buffer));
-        } else {
-          return;
-        }
-
-        writeQueue = writeQueue
-          .then(async () => {
-            const buf = await bufPromise;
-
-            // Call consumer's onData handler
-            if (onData) {
-              await onData(buf);
-            }
-
-            received += buf.byteLength;
-            const percent = total ? Math.min(100, (received / total) * 100) : 0;
-            onProgress?.({ processedBytes: received, totalBytes: total, percent });
-
-            const now = Date.now();
-            if (received === total || now - lastProgressSentAt >= progressIntervalMs) {
-              lastProgressSentAt = now;
-              try {
-                conn.send({ t: 'progress', received, total });
-              } catch {
-                // Ignore send errors
+            // Send additional acks for reliability (fire-and-forget, best effort)
+            (async () => {
+              for (let i = 0; i < 2; i++) {
+                await sleep(P2P_END_ACK_RETRY_DELAY_MS);
+                try {
+                  conn.send({ t: 'end_ack', received: finalReceived, total: finalTotal });
+                } catch {
+                  break; // Connection closed
+                }
               }
-            }
-          })
-          .catch((err) => {
-            try {
-              conn.send({
-                t: 'error',
-                message: (err as Error)?.message || 'Receiver write failed.',
-              });
-            } catch {
-              // Ignore send errors
-            }
-            safeError(err as Error);
-          });
+            })().catch(() => { });
+            break;
+
+          case 'error':
+            throw new DropgateNetworkError(msg.message || 'Sender reported an error.');
+
+          case 'cancelled':
+            if (state === 'cancelled' || state === 'closed' || state === 'completed') return;
+            transitionTo('cancelled');
+            onCancel?.({ cancelledBy: 'sender', message: msg.reason });
+            cleanup();
+            break;
+        }
       } catch (err) {
         safeError(err as Error);
       }
@@ -398,12 +559,12 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
         // Connection closed during active transfer — the sender either cancelled
         // or disconnected. Treat as a sender-initiated cancellation so the UI
         // can show a clean message instead of a raw error.
-        state = 'cancelled';
+        transitionTo('cancelled');
         onCancel?.({ cancelledBy: 'sender' });
         cleanup();
       } else if (state === 'negotiating') {
         // We had metadata but transfer hadn't started
-        state = 'closed';
+        transitionTo('closed');
         cleanup();
         onDisconnect?.();
       } else {

@@ -1,4 +1,4 @@
-import { getServerInfo, isSecureContextForP2P, startP2PReceive } from './dropgate-core.js';
+import { DropgateClient, isSecureContextForP2P, StreamingZipWriter } from './dropgate-core.js';
 import { setStatusError, setStatusSuccess, StatusType, Icons, updateStatusCard, clearStatusBorder } from './status-card.js';
 
 const elTitle = document.getElementById('title');
@@ -9,11 +9,16 @@ const elBytes = document.getElementById('bytes');
 const elActions = document.getElementById('actions');
 const retryBtn = document.getElementById('retryBtn');
 const elFileDetails = document.getElementById('file-details');
+const elFileNameLabel = document.getElementById('file-name-label');
 const elFileName = document.getElementById('file-name');
 const elFileSize = document.getElementById('file-size');
 const elDownloadBtn = document.getElementById('download-button');
 const elCancelBtn = document.getElementById('cancel-button');
 const elProgressContainer = document.getElementById('progress-container');
+const elP2PFileListContainer = document.getElementById('p2p-file-list-container');
+const elP2PToggleFileList = document.getElementById('p2p-toggle-file-list');
+const elP2PFileList = document.getElementById('p2p-file-list');
+const elP2PFileListItems = document.getElementById('p2p-file-list-items');
 const card = document.getElementById('status-card');
 const iconContainer = document.getElementById('icon-container');
 
@@ -25,15 +30,73 @@ let total = 0;
 let received = 0;
 let transferCompleted = false;
 let writer = null;
+let zipWriter = null;
+let isMultiFile = false;
+let fileCount = 0;
 let pendingSendReady = null;
 let fileName = null;
 let p2pSession = null;
+let p2pFileListVisible = false;
+
+function buildP2PFileList(files) {
+  if (!elP2PFileListItems || !elP2PFileListContainer) return;
+  elP2PFileListItems.innerHTML = '';
+  for (const f of files) {
+    const li = document.createElement('li');
+    li.className = 'list-group-item d-flex justify-content-between align-items-center py-2';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'text-truncate me-2';
+    nameSpan.textContent = f.name;
+    nameSpan.title = f.name;
+    const sizeSpan = document.createElement('span');
+    sizeSpan.className = 'text-body-secondary small flex-shrink-0';
+    sizeSpan.textContent = formatBytes(f.size);
+    li.appendChild(nameSpan);
+    li.appendChild(sizeSpan);
+    elP2PFileListItems.appendChild(li);
+  }
+  elP2PFileListContainer.style.display = 'block';
+
+  elP2PToggleFileList?.addEventListener('click', () => {
+    p2pFileListVisible = !p2pFileListVisible;
+    elP2PFileList.style.display = p2pFileListVisible ? 'block' : 'none';
+    elP2PToggleFileList.innerHTML = p2pFileListVisible
+      ? '<span class="material-icons-round" style="font-size: 1rem; vertical-align: middle;">expand_less</span> Hide files'
+      : '<span class="material-icons-round" style="font-size: 1rem; vertical-align: middle;">expand_more</span> Show files';
+  });
+}
+
+// Title progress tracking
+const originalTitle = document.title;
+let currentTransferProgress = null; // { percent, received, total }
+
+const updateTitleProgress = (percent) => {
+  if (percent > 1 && percent < 100) {
+    document.title = `${Math.floor(percent)}% - ${originalTitle}`;
+  } else {
+    document.title = originalTitle;
+  }
+};
+
+const resetTitleProgress = () => {
+  document.title = originalTitle;
+  currentTransferProgress = null;
+};
+
+// Visibility change handler - sync UI immediately when tab becomes visible
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentTransferProgress) {
+    // Tab became visible and we have an active transfer
+    // Force UI update
+    setProgress();
+  }
+});
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
   const k = 1000;
-  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
   return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
@@ -41,6 +104,11 @@ function formatBytes(bytes) {
 
 const setProgress = () => {
   const pct = total > 0 ? Math.min(100, (received / total) * 100) : 0;
+
+  // Update title and store progress state
+  updateTitleProgress(pct);
+  currentTransferProgress = { percent: pct, received, total };
+
   elBar.style.width = `${pct}%`;
   elBytes.textContent = `${formatBytes(received)} / ${formatBytes(total)}`;
 };
@@ -63,15 +131,7 @@ const showError = (title, message) => {
   elBar.parentElement.hidden = true;
 };
 
-async function loadServerInfo() {
-  const { serverInfo } = await getServerInfo({
-    host: location.hostname,
-    port: location.port ? Number(location.port) : undefined,
-    secure: location.protocol === 'https:',
-    timeoutMs: 5000,
-  });
-  return serverInfo;
-}
+const client = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
 
 async function loadPeerJS() {
   if (globalThis.Peer) return globalThis.Peer;
@@ -109,8 +169,15 @@ function startDownload() {
 
   // Create streamSaver write stream
   if (window.streamSaver?.createWriteStream) {
-    const stream = window.streamSaver.createWriteStream(fileName, total ? { size: total } : undefined);
+    const stream = window.streamSaver.createWriteStream(fileName, isMultiFile ? undefined : (total ? { size: total } : undefined));
     writer = stream.getWriter();
+
+    // For multi-file transfers, set up a StreamingZipWriter that pipes ZIP data into the StreamSaver writer
+    if (isMultiFile) {
+      zipWriter = new StreamingZipWriter(async (chunk) => {
+        await writer.write(chunk);
+      });
+    }
   }
 
   // Wire up cancel button
@@ -141,19 +208,6 @@ async function start() {
   elTitle.textContent = 'Connecting...';
   elMsg.textContent = `Connecting to ${code}...`;
 
-  let info;
-  try {
-    info = await loadServerInfo();
-  } catch {
-    info = {};
-  }
-
-  const p2p = info?.capabilities?.p2p || {};
-  if (p2p.enabled === false) {
-    showError('Direct transfer disabled', 'This server has P2P disabled.');
-    return;
-  }
-
   // Load PeerJS
   let Peer;
   try {
@@ -164,28 +218,21 @@ async function start() {
     return;
   }
 
-  const peerjsPath = p2p.peerjsPath || '/peerjs';
-  const iceServers = Array.isArray(p2p.iceServers) ? p2p.iceServers : [];
-
   try {
-    p2pSession = await startP2PReceive({
+    p2pSession = await client.p2pReceive({
       code,
       Peer,
-      host: location.hostname,
-      port: location.port ? Number(location.port) : undefined,
-      secure: location.protocol === 'https:',
-      serverInfo: info,
-      peerjsPath,
-      iceServers,
       autoReady: false, // We want to show preview before starting transfer
       onStatus: () => {
         elTitle.textContent = 'Connected';
         elMsg.textContent = 'Waiting for file details...';
       },
-      onMeta: ({ name, total: nextTotal, sendReady }) => {
-        total = nextTotal;
+      onMeta: ({ name, total: nextTotal, sendReady, fileCount: metaFileCount, files, totalSize }) => {
+        total = totalSize || nextTotal;
         received = 0;
-        fileName = name;
+        fileCount = metaFileCount || 1;
+        isMultiFile = fileCount > 1;
+        fileName = isMultiFile ? `dropgate-bundle-${code}.zip` : name;
 
         // Store the sendReady function to call when user clicks download
         pendingSendReady = sendReady;
@@ -194,10 +241,16 @@ async function start() {
         elTitle.textContent = 'Ready to Transfer';
         elMsg.textContent = 'Review the file details below, then click Start Transfer.';
 
-        elFileName.textContent = name;
+        elFileName.textContent = isMultiFile ? fileCount : name;
+        elFileNameLabel.textContent = isMultiFile ? 'Files' : 'File name';
         elFileSize.textContent = formatBytes(total);
         elFileDetails.style.display = 'block';
         elDownloadBtn.style.display = 'inline-block';
+
+        // Build collapsible file list for multi-file transfers
+        if (isMultiFile && files && files.length) {
+          buildP2PFileList(files);
+        }
 
         // Clear border for neutral preview state
         clearStatusBorder(card);
@@ -205,9 +258,24 @@ async function start() {
         // Add click handler for download button
         elDownloadBtn.addEventListener('click', startDownload, { once: true });
       },
+      onFileStart: ({ name }) => {
+        // Start a new file entry in the ZIP writer (multi-file only)
+        if (zipWriter) {
+          zipWriter.startFile(name);
+        }
+      },
+      onFileEnd: () => {
+        // End the current file entry in the ZIP writer (multi-file only)
+        if (zipWriter) {
+          zipWriter.endFile();
+        }
+      },
       onData: async (chunk) => {
-        // Write chunk to file via streamSaver
-        if (writer) {
+        if (zipWriter) {
+          // Multi-file: write chunk through the ZIP writer (which pipes to StreamSaver)
+          zipWriter.writeChunk(chunk);
+        } else if (writer) {
+          // Single file: write directly to StreamSaver
           await writer.write(chunk);
         }
         received += chunk.byteLength;
@@ -221,8 +289,17 @@ async function start() {
       },
       onComplete: async () => {
         transferCompleted = true;
+        resetTitleProgress();
 
-        // Close the writer
+        // Finalize ZIP if multi-file, then close the writer
+        if (zipWriter) {
+          try {
+            await zipWriter.finalize();
+          } catch (err) {
+            console.error('Error finalizing ZIP:', err);
+          }
+          zipWriter = null;
+        }
         if (writer) {
           try {
             await writer.close();
@@ -240,7 +317,7 @@ async function start() {
           title: 'Transfer Complete',
           message: 'Success!',
         });
-        elMeta.textContent = 'The file has been saved to your downloads.';
+        elMeta.textContent = `The ${isMultiFile ? `${fileCount} files have` : 'file has'} been saved to your downloads.`;
         elMeta.hidden = false;
         elFileDetails.style.display = 'none';
         elCancelBtn.style.display = 'none';
@@ -248,6 +325,7 @@ async function start() {
       },
       onError: (err) => {
         if (transferCompleted) return;
+        resetTitleProgress();
         console.error(err);
 
         // Abort the writer on error
@@ -267,10 +345,11 @@ async function start() {
           showError('Connection Failed', 'Could not connect to the sender. Check the code, ensure the sender is online, and try again.');
           return;
         }
-        showError('Transfer Error', 'An error occurred during the transfer.');
+        showError('Transfer Failed', err?.message || 'An error occurred during transfer.');
       },
       onDisconnect: () => {
         if (transferCompleted) return;
+        resetTitleProgress();
 
         // Abort the writer on disconnect
         if (writer) {
@@ -288,6 +367,7 @@ async function start() {
       },
       onCancel: (evt) => {
         if (transferCompleted) return;
+        resetTitleProgress();
 
         // Abort the writer on cancellation
         if (writer) {

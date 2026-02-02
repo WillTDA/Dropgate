@@ -17,7 +17,7 @@ const card = document.getElementById('status-card');
 const trustStatement = document.getElementById('trust-statement');
 const encryptionStatement = document.getElementById('encryption-statement');
 
-const client = new DropgateClient({ clientVersion: '2.2.1' });
+const client = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
 
 const downloadState = {
   fileId: null,
@@ -44,7 +44,7 @@ function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
   if (bytes === 0) return '0 bytes';
   const k = 1000;
-  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const v = bytes / Math.pow(k, i);
   return `${v.toFixed(v < 10 && i > 0 ? 2 : 1)} ${sizes[i]}`;
@@ -74,9 +74,16 @@ async function startDownload() {
 
   // For plain files in non-secure context, fall back to direct download
   if (!downloadState.isEncrypted && (!window.isSecureContext || !window.streamSaver?.createWriteStream)) {
-    statusTitle.textContent = 'Download Starting';
-    statusMessage.textContent = 'Your download will start in a new request (completion can\'t be tracked on HTTP).';
+    progressContainer.style.display = 'none';
     window.location.href = `/api/file/${downloadState.fileId}`;
+    setStatusSuccess({
+      card,
+      iconContainer,
+      titleEl: statusTitle,
+      messageEl: statusMessage,
+      title: 'Download Started',
+      message: `Your file "${downloadState.fileName}" should be downloading now. Check your browser\'s download bar.`,
+    });
     return;
   }
 
@@ -90,10 +97,7 @@ async function startDownload() {
     statusTitle.textContent = downloadState.isEncrypted ? 'Downloading & Decrypting' : 'Downloading';
     statusMessage.textContent = 'Streaming directly to file...';
 
-    await client.downloadFile({
-      host: location.hostname,
-      port: location.port ? Number(location.port) : undefined,
-      secure: location.protocol === 'https:',
+    await client.downloadFiles({
       fileId: downloadState.fileId,
       keyB64: downloadState.keyB64,
       timeoutMs: 0, // No timeout for large file downloads
@@ -151,13 +155,9 @@ async function loadMetadata() {
   fileIdEl.textContent = fileId;
 
   try {
-    const response = await fetch(`/api/file/${fileId}/meta`);
-    if (!response.ok) {
-      showError('File Not Found', 'This file link is invalid or has already expired.');
-      return;
-    }
+    // Use core library to fetch file metadata
+    const metadata = await client.getFileMetadata(fileId);
 
-    const metadata = await response.json();
     downloadState.isEncrypted = Boolean(metadata.isEncrypted);
     downloadState.sizeBytes = metadata.sizeBytes;
     fileEncryptionEl.textContent = metadata.isEncrypted ? 'End-to-End Encrypted' : 'None';

@@ -12,6 +12,8 @@ export interface UploadCapabilities {
   maxFileDownloads?: number;
   /** Whether end-to-end encryption is supported. */
   e2ee?: boolean;
+  /** Expected upload chunk size in bytes (server-configured). */
+  chunkSize?: number;
 }
 
 /**
@@ -76,9 +78,15 @@ export interface BaseProgressEvent {
  */
 export interface UploadProgressEvent extends BaseProgressEvent {
   /** Current phase of the operation. */
-  phase: 'server-info' | 'server-compat' | 'crypto' | 'init' | 'chunk' | 'complete' | 'done' | 'retry-wait' | 'retry';
+  phase: 'server-info' | 'server-compat' | 'crypto' | 'init' | 'file-start' | 'chunk' | 'file-complete' | 'complete' | 'done' | 'retry-wait' | 'retry';
   /** Human-readable status text. */
   text?: string;
+  /** Index of the current file being uploaded (0-based). Only present for multi-file uploads. */
+  fileIndex?: number;
+  /** Total number of files being uploaded. Only present for multi-file uploads. */
+  totalFiles?: number;
+  /** Name of the current file being uploaded. Only present for multi-file uploads. */
+  currentFileName?: string;
   /** Current chunk index (0-based). */
   chunkIndex?: number;
   /** Total number of chunks. */
@@ -91,19 +99,23 @@ export interface UploadProgressEvent extends BaseProgressEvent {
 export interface UploadResult {
   /** Full download URL including encryption key fragment if encrypted. */
   downloadUrl: string;
-  /** Unique file identifier on the server. */
-  fileId: string;
-  /** Upload session identifier. */
-  uploadId: string;
+  /** Unique file identifier on the server (set for single-file uploads). */
+  fileId?: string;
+  /** Unique bundle identifier on the server (set for multi-file uploads). */
+  bundleId?: string;
+  /** Upload session identifier (set for single-file uploads). */
+  uploadId?: string;
   /** Server base URL used for the upload. */
   baseUrl: string;
   /** Base64-encoded encryption key (only present if encrypted). */
   keyB64?: string;
+  /** Per-file results (only present for multi-file uploads). */
+  files?: Array<{ fileId: string; name: string; size: number }>;
 }
 
 /**
  * Upload session with cancellation support.
- * Returned by uploadFile() to allow cancelling uploads in progress.
+ * Returned by uploadFiles() to allow cancelling uploads in progress.
  */
 export interface UploadSession {
   /** Promise that resolves with upload result when complete. */
@@ -193,23 +205,15 @@ export interface FileSource {
 }
 
 /**
- * Logger function type for debug and diagnostic output.
- * @param level - Log level (debug, info, warn, error).
- * @param message - Log message.
- * @param meta - Optional metadata object.
- */
-export type LoggerFn = (
-  level: 'debug' | 'info' | 'warn' | 'error',
-  message: string,
-  meta?: unknown
-) => void;
-
-/**
  * Options for constructing a DropgateClient instance.
  */
 export interface DropgateClientOptions {
   /** Client version string for compatibility checking with the server. */
   clientVersion: string;
+  /** Server URL string (e.g. 'https://dropgate.link') or ServerTarget object. Required. */
+  server: string | ServerTarget;
+  /** If true, automatically retry with HTTP when HTTPS connection fails in connect(). Default: false. */
+  fallbackToHttp?: boolean;
   /** Upload chunk size in bytes (default: 5MB). */
   chunkSize?: number;
   /** Custom fetch implementation (uses global fetch by default). */
@@ -218,8 +222,6 @@ export interface DropgateClientOptions {
   cryptoObj?: CryptoAdapter;
   /** Custom base64 encoder/decoder. */
   base64?: Base64Adapter;
-  /** Custom logger function for debug output. */
-  logger?: LoggerFn;
 }
 
 /**
@@ -235,22 +237,24 @@ export interface ServerTarget {
 }
 
 /**
- * Options for uploading a file to the server.
+ * Options for uploading one or more files to the server.
+ * Single files use the standard upload protocol. Multiple files use the bundle protocol.
+ * Server connection is configured once in the DropgateClient constructor.
  */
-export interface UploadOptions extends ServerTarget {
-  /** File to upload. */
-  file: FileSource;
+export interface UploadFilesOptions {
+  /** File(s) to upload. A single FileSource or an array of FileSources. */
+  files: FileSource | FileSource[];
   /** File lifetime in milliseconds (0 = server default). */
   lifetimeMs: number;
-  /** Whether to encrypt the file with E2EE. Defaults to true if server supports E2EE. */
+  /** Whether to encrypt the file(s) with E2EE. Defaults to true if server supports E2EE. */
   encrypt?: boolean;
-  /** Override the filename sent to the server. */
-  filenameOverride?: string;
+  /** Override filenames sent to the server, keyed by file index. */
+  filenameOverrides?: Record<number, string>;
   /** Callback for progress updates. */
   onProgress?: (evt: UploadProgressEvent) => void;
   /** Callback when upload is cancelled by user. */
   onCancel?: () => void;
-  /** Max downloads before file is deleted (0 = unlimited). */
+  /** Max downloads before file/bundle is deleted (0 = unlimited). */
   maxDownloads?: number;
   /** AbortSignal to cancel the upload. */
   signal?: AbortSignal;
@@ -279,7 +283,9 @@ export interface UploadOptions extends ServerTarget {
 /**
  * Options for fetching server information.
  */
-export interface GetServerInfoOptions extends ServerTarget {
+export interface GetServerInfoOptions {
+  /** Server URL string (e.g. 'https://dropgate.link') or ServerTarget object. */
+  server: string | ServerTarget;
   /** Request timeout in milliseconds (default: 5000ms). */
   timeoutMs?: number;
   /** AbortSignal to cancel the request. */
@@ -289,11 +295,21 @@ export interface GetServerInfoOptions extends ServerTarget {
 }
 
 /**
+ * Options for the connect() method on DropgateClient.
+ */
+export interface ConnectOptions {
+  /** Request timeout in milliseconds (default: 5000ms). */
+  timeoutMs?: number;
+  /** AbortSignal to cancel the request. */
+  signal?: AbortSignal;
+}
+
+/**
  * Options for validating upload inputs before starting an upload.
  */
 export interface ValidateUploadOptions {
-  /** File to validate. */
-  file: FileSource;
+  /** File(s) to validate. */
+  files: FileSource | FileSource[];
   /** Requested file lifetime in milliseconds. */
   lifetimeMs: number;
   /** Whether encryption will be used. Defaults to true if server supports E2EE. */
@@ -321,23 +337,43 @@ export interface FileMetadata {
  */
 export interface DownloadProgressEvent extends BaseProgressEvent {
   /** Current phase of the download. */
-  phase: 'server-info' | 'server-compat' | 'metadata' | 'downloading' | 'decrypting' | 'complete';
+  phase: 'server-info' | 'server-compat' | 'metadata' | 'downloading' | 'decrypting' | 'zipping' | 'complete';
   /** Human-readable status text. */
   text?: string;
+  /** Index of the current file being downloaded (0-based). Only present for bundle downloads. */
+  fileIndex?: number;
+  /** Total number of files in the bundle. Only present for bundle downloads. */
+  totalFiles?: number;
+  /** Name of the current file being downloaded. Only present for bundle downloads. */
+  currentFileName?: string;
 }
 
 /**
- * Options for downloading a file.
+ * Options for downloading one or more files.
+ * Use `fileId` for single-file downloads or `bundleId` for multi-file bundle downloads.
+ * Server connection is configured once in the DropgateClient constructor.
  */
-export interface DownloadOptions extends ServerTarget {
-  /** File ID to download. */
-  fileId: string;
-  /** Base64-encoded decryption key (required for encrypted files). */
+export interface DownloadFilesOptions {
+  /** File ID to download (for single-file downloads). */
+  fileId?: string;
+  /** Bundle ID to download (for multi-file bundle downloads). */
+  bundleId?: string;
+  /** Base64-encoded decryption key (required for encrypted files/bundles). */
   keyB64?: string;
+  /** If true and bundleId is set, streams all files as a single ZIP via onData. */
+  asZip?: boolean;
+  /** Filename for the generated ZIP (default: "dropgate-bundle.zip"). Only used with asZip. */
+  zipFilename?: string;
   /** Callback for progress updates. */
   onProgress?: (evt: DownloadProgressEvent) => void;
-  /** Callback for received data chunks. Consumer handles file writing. */
+  /** Callback for received data chunks (single-file or ZIP stream). Consumer handles writing. */
   onData?: (chunk: Uint8Array) => Promise<void> | void;
+  /** Callback when a file download begins (bundle non-ZIP mode). Consumer opens a new write stream. */
+  onFileStart?: (file: { name: string; size: number; index: number }) => void;
+  /** Callback for received data chunks per file (bundle non-ZIP mode). */
+  onFileData?: (chunk: Uint8Array) => Promise<void> | void;
+  /** Callback when a file download ends (bundle non-ZIP mode). Consumer closes the write stream. */
+  onFileEnd?: (file: { name: string; index: number }) => void;
   /** AbortSignal to cancel the download. */
   signal?: AbortSignal;
   /** Request timeout in milliseconds (default: 60000ms). */
@@ -348,12 +384,41 @@ export interface DownloadOptions extends ServerTarget {
  * Result of a file download.
  */
 export interface DownloadResult {
-  /** Decrypted filename. */
-  filename: string;
-  /** Total bytes received. */
+  /** Decrypted filename (for single-file downloads). */
+  filename?: string;
+  /** Decrypted filenames (for bundle downloads). */
+  filenames?: string[];
+  /** Total bytes received across all files. */
   receivedBytes: number;
-  /** Whether the file was encrypted. */
+  /** Whether the file(s) were encrypted. */
   wasEncrypted: boolean;
-  /** The file data (only if onData callback was not provided). */
+  /** The file data (only for small single files when onData callback was not provided). */
   data?: Uint8Array;
+}
+
+/**
+ * Bundle metadata returned from the server.
+ */
+export interface BundleMetadata {
+  /** Whether the bundle files are encrypted. */
+  isEncrypted: boolean;
+  /** Total size of all files in bytes. */
+  totalSizeBytes: number;
+  /** Number of files in the bundle. */
+  fileCount: number;
+  /** Whether the bundle manifest is encrypted (sealed). Only the downloader can read the file list. */
+  sealed?: boolean;
+  /** Base64-encoded encrypted manifest blob (only present for sealed bundles). */
+  encryptedManifest?: string;
+  /** Individual file metadata entries. Populated from server for unsealed bundles, or from decrypted manifest for sealed bundles. */
+  files: Array<{
+    /** File ID for downloading this individual file. */
+    fileId: string;
+    /** File size in bytes (encrypted size if encrypted). */
+    sizeBytes: number;
+    /** Original filename (only for unencrypted files). */
+    filename?: string;
+    /** Encrypted filename (only for encrypted files). */
+    encryptedFilename?: string;
+  }>;
 }

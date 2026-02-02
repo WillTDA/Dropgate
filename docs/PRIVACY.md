@@ -13,10 +13,12 @@ The current log level is also exposed to clients via `GET /api/info` so users ca
 Dropgate is intentionally opinionated about avoiding identifying data.
 By design, it does **not** log:
 
-- File contents
+- File contents / Bundle manifests
+- File names
 - Encryption keys / URL fragments
 - Upload session IDs
 - File IDs
+- Bundle IDs
 - Client IP addresses
 - Per-request identifiers or headers
 
