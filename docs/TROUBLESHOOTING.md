@@ -47,6 +47,14 @@ Set `LOG_LEVEL=DEBUG` on the server, reproduce the issue once, then set it back.
 - Lowering the chunk size can help on unstable connections (smaller chunks = less data to re-upload on failure), but increases the number of HTTP requests per file and adds per-chunk overhead (hashing, encryption IV/tag).
 - The 64KB minimum prevents extreme fragmentation — values below this would generate millions of chunks for moderate files and cause significant per-chunk overhead.
 
+**"Too many chunks" error**
+- The server limits files to 100,000 chunks maximum (about 500GB at 5MB chunk size).
+- **Solution**: Increase `UPLOAD_CHUNK_SIZE_BYTES` to reduce the number of chunks. For very large files, consider using a 10MB or 20MB chunk size.
+
+**"Too many files" error (bundles)**
+- Bundles are limited to 1,000 files maximum for security and performance reasons.
+- **Solution**: Split your files into multiple separate uploads, or use client-side ZIP compression before uploading.
+
 ## 4) Encryption / HTTPS issues
 
 - Some browser features (especially WebRTC used for P2P) require a **secure context**.

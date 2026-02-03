@@ -74,13 +74,16 @@ function initAutoUpdater() {
             title: 'Update Available',
             message: 'A new version of Dropgate Client is available!',
             detail: `Current version: ${currentVersion}\nNew version: ${newVersion}\n\nWould you like to download and install this update?`,
-            buttons: ['Yes, Update Now', 'No, Later'],
+            buttons: ['Yes, Update Now', 'No, Later', 'View Changelog'],
             defaultId: 0,
             cancelId: 1
         }).then(result => {
             if (result.response === 0) {
                 log('User chose to download update');
                 autoUpdater.downloadUpdate();
+            } else if (result.response === 2) {
+                log('User chose to view changelog');
+                shell.openExternal(`https://github.com/WillTDA/Dropgate/releases/tag/${newVersion}`);
             } else {
                 log('User declined update');
             }
@@ -130,7 +133,11 @@ function checkForUpdatesManually() {
                 title: 'No Updates',
                 message: 'You\'re up to date!',
                 detail: `Dropgate Client ${app.getVersion()} is the latest version.`,
-                buttons: ['OK']
+                buttons: ['OK', 'View Changelog']
+            }).then(result => {
+                if (result.response === 1) {
+                    shell.openExternal(`https://github.com/WillTDA/Dropgate/releases/tag/${app.getVersion()}`);
+                }
             });
         }
     }).catch(err => {

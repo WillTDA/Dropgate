@@ -129,7 +129,7 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-const coreClient = new DropgateClient({ clientVersion: '3.0.0', server: location.origin });
+const coreClient = new DropgateClient({ clientVersion: '3.0.1', server: location.origin });
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
