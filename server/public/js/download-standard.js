@@ -27,6 +27,21 @@ const downloadState = {
   sizeBytes: 0,
 };
 
+// Title progress tracking
+const originalTitle = document.title;
+
+const updateTitleProgress = (percent) => {
+  if (percent > 1 && percent < 100) {
+    document.title = `${Math.floor(percent)}% - ${originalTitle}`;
+  } else {
+    document.title = originalTitle;
+  }
+};
+
+const resetTitleProgress = () => {
+  document.title = originalTitle;
+};
+
 function showError(title, message) {
   setStatusError({
     card,
@@ -102,6 +117,7 @@ async function startDownload() {
       keyB64: downloadState.keyB64,
       timeoutMs: 0, // No timeout for large file downloads
       onProgress: ({ percent, processedBytes, totalBytes }) => {
+        updateTitleProgress(Math.round(percent));
         progressBar.style.width = `${percent}%`;
         progressText.textContent = `${formatBytes(processedBytes)} / ${formatBytes(totalBytes)}`;
         statusMessage.textContent = totalBytes
@@ -115,6 +131,7 @@ async function startDownload() {
 
     await writer.close();
 
+    resetTitleProgress();
     progressBar.style.width = '100%';
     setStatusSuccess({
       card,
@@ -128,6 +145,7 @@ async function startDownload() {
     });
   } catch (error) {
     console.error(error);
+    resetTitleProgress();
     progressContainer.style.display = 'none';
     downloadButton.textContent = 'Retry Download';
     downloadButton.style.display = 'inline-block';
@@ -196,6 +214,7 @@ async function loadMetadata() {
     statusMessage.textContent = 'Review the file details above, then click Start Download.';
   } catch (error) {
     console.error(error);
+    resetTitleProgress();
     showError('Download Error', 'We could not load the file details. Please try again later.');
   }
 }
