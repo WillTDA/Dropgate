@@ -144,6 +144,16 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
   let currentFileReceived = 0;
   let totalReceivedAllFiles = 0;
 
+  // Security: Chunk sequence validation
+  let expectedChunkSeq = 0;
+
+  // Security: Write queue depth limiting to prevent memory exhaustion
+  let writeQueueDepth = 0;
+  const MAX_WRITE_QUEUE_DEPTH = 100;
+
+  // Security: Maximum file count for multi-file transfers
+  const MAX_FILE_COUNT = 10000;
+
   /**
    * Attempt a state transition. Returns true if transition was valid.
    */
@@ -291,12 +301,31 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
     conn.on('data', async (data: unknown) => {
       try {
-        // Reset watchdog on any data received
-        resetWatchdog();
+        // Note: Watchdog is reset only on actual binary data, not control messages
+        // This prevents attackers from keeping connections alive with just pings
 
         // Handle binary data - this is file content
         if (data instanceof ArrayBuffer || ArrayBuffer.isView(data) ||
           (typeof Blob !== 'undefined' && data instanceof Blob)) {
+
+          // CRITICAL SECURITY: Only accept binary data if we're in 'transferring' state
+          // This ensures the receiver has:
+          // 1. Received file metadata (meta message)
+          // 2. Consented to receive (sent 'ready' signal)
+          // Without this check, a malicious sender could force data onto the receiver
+          if (state !== 'transferring') {
+            throw new DropgateValidationError(
+              'Received binary data before transfer was accepted. Possible malicious sender.'
+            );
+          }
+
+          // Security: Only reset watchdog on actual binary data (prevents keep-alive attacks)
+          resetWatchdog();
+
+          // Security: Check write queue depth to prevent memory exhaustion
+          if (writeQueueDepth >= MAX_WRITE_QUEUE_DEPTH) {
+            throw new DropgateNetworkError('Write queue overflow - receiver cannot keep up');
+          }
 
           // Process the binary chunk
           let bufPromise: Promise<Uint8Array>;
@@ -315,11 +344,28 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
 
           // Queue the write operation
           const chunkSeq = pendingChunk?.seq ?? -1;
+          const expectedSize = pendingChunk?.size;
           pendingChunk = null;
 
+          writeQueueDepth++;
           writeQueue = writeQueue
             .then(async () => {
               const buf = await bufPromise;
+
+              // Security: Validate chunk size matches declared size
+              if (expectedSize !== undefined && buf.byteLength !== expectedSize) {
+                throw new DropgateValidationError(
+                  `Chunk size mismatch: expected ${expectedSize}, got ${buf.byteLength}`
+                );
+              }
+
+              // Security: Validate we don't receive more than declared total
+              const newReceived = received + buf.byteLength;
+              if (total > 0 && newReceived > total) {
+                throw new DropgateValidationError(
+                  `Received more data than expected: ${newReceived} > ${total}`
+                );
+              }
 
               // Call consumer's onData handler (stream-through, no buffering)
               if (onData) {
@@ -348,6 +394,9 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
                 // Ignore send errors
               }
               safeError(err as Error);
+            })
+            .finally(() => {
+              writeQueueDepth--;
             });
 
           return;
@@ -365,11 +414,27 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             onStatus?.({ phase: 'waiting', message: 'Waiting for file details...' });
             break;
 
-          case 'file_list':
+          case 'file_list': {
             // v3: Store file list for multi-file transfer
-            fileList = msg as P2PFileListMessage;
-            total = fileList.totalSize;
+            const fileListMsg = msg as P2PFileListMessage;
+
+            // Security: Validate file count
+            if (fileListMsg.fileCount > MAX_FILE_COUNT) {
+              throw new DropgateValidationError(`Too many files: ${fileListMsg.fileCount}`);
+            }
+
+            // Security: Validate total size matches sum of file sizes
+            const sumSize = fileListMsg.files.reduce((sum, f) => sum + f.size, 0);
+            if (sumSize !== fileListMsg.totalSize) {
+              throw new DropgateValidationError(
+                `File list size mismatch: declared ${fileListMsg.totalSize}, actual sum ${sumSize}`
+              );
+            }
+
+            fileList = fileListMsg;
+            total = fileListMsg.totalSize;
             break;
+          }
 
           case 'meta': {
             // For multi-file: meta comes for each file (first triggers ready, subsequent auto-transition)
@@ -454,9 +519,27 @@ export async function startP2PReceive(opts: P2PReceiveOptions): Promise<P2PRecei
             break;
           }
 
-          case 'chunk':
-            pendingChunk = msg as P2PChunkMessage;
+          case 'chunk': {
+            const chunkMsg = msg as P2PChunkMessage;
+
+            // Security: Only accept chunk messages if we're in 'transferring' state
+            if (state !== 'transferring') {
+              throw new DropgateValidationError(
+                'Received chunk message before transfer was accepted.'
+              );
+            }
+
+            // Security: Validate chunk sequence (must be in order)
+            if (chunkMsg.seq !== expectedChunkSeq) {
+              throw new DropgateValidationError(
+                `Chunk sequence error: expected ${expectedChunkSeq}, got ${chunkMsg.seq}`
+              );
+            }
+            expectedChunkSeq++;
+
+            pendingChunk = chunkMsg;
             break;
+          }
 
           case 'ping':
             // Respond to heartbeat - keeps watchdog alive and confirms we're active

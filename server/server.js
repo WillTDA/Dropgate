@@ -181,6 +181,20 @@ let bundleDatabase = null;
 let ongoingUploads = null;
 let ongoingBundles = null;
 
+// Security: Mutex for atomic quota checking (prevents TOCTOU race condition)
+let quotaLock = Promise.resolve();
+const acquireQuotaLock = () => {
+    let release;
+    const acquire = new Promise(resolve => { release = resolve; });
+    const previousLock = quotaLock;
+    quotaLock = acquire;
+    return previousLock.then(() => release);
+};
+
+// Security: Limits to prevent DoS attacks
+const MAX_CHUNKS = 100000; // Maximum chunks per file (~500GB at 5MB chunks)
+const MAX_BUNDLE_FILES = 1000; // Maximum files per bundle
+
 if (enableUpload) {
     preserveUploads = process.env.UPLOAD_PRESERVE_UPLOADS === 'true';
     log('info', `UPLOAD_PRESERVE_UPLOADS: ${preserveUploads}`);
@@ -385,7 +399,7 @@ if (enableUpload) {
         return limiter(req, res, next);
     };
 
-    uploadRouter.post('/init', limiter, (req, res) => {
+    uploadRouter.post('/init', limiter, async (req, res) => {
         const uploadId = uuidv4();
         const { filename, lifetime, isEncrypted, totalSize, totalChunks, maxDownloads: clientMaxDownloads } = req.body;
 
@@ -420,6 +434,17 @@ if (enableUpload) {
             return res.status(413).json({ error: `File exceeds limit of ${maxFileSizeMB} MB.` });
         }
 
+        // Validate chunk count upper bound
+        if (chunks > MAX_CHUNKS) {
+            return res.status(400).json({ error: `Too many chunks. Maximum: ${MAX_CHUNKS}. Try increasing chunk size.` });
+        }
+
+        // Validate chunk count matches file size (prevents attack claiming many chunks for small file)
+        const expectedChunks = Math.ceil(size / uploadChunkSizeBytes);
+        if (Math.abs(chunks - expectedChunks) > 1) { // Allow ±1 for rounding and encryption overhead
+            return res.status(400).json({ error: 'Chunk count does not match file size.' });
+        }
+
         // Validate lifetime against max
         if (MAX_FILE_LIFETIME_MS !== Infinity) {
             if (lifetime === 0) {
@@ -430,20 +455,28 @@ if (enableUpload) {
             }
         }
 
-        // Check Storage Quota
-        // Calculate reserved space from active uploads
-        let reservedSpace = 0;
-        ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
-
-        if ((currentDiskUsage + reservedSpace + size) > MAX_STORAGE_BYTES) {
-            log('debug', `Upload rejected due to insufficient storage. Current usage: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB, Reserved: ${(reservedSpace / 1000 / 1000 / 1000).toFixed(2)} GB, Requested: ${(size / 1000 / 1000 / 1000).toFixed(2)} GB.`);
-            return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
-        }
-
         // Validate filename if not encrypted
         if (!isEncrypted) {
-            if (filename.length > 255 || /[\/\\]/.test(filename)) {
-                return res.status(400).json({ error: 'Invalid filename. Contains illegal characters or is too long.' });
+            // Security: Null bytes
+            if (filename.includes('\x00')) {
+                return res.status(400).json({ error: 'Filename contains null bytes.' });
+            }
+            // Security: Control characters
+            if (/[\x00-\x1F\x7F]/.test(filename)) {
+                return res.status(400).json({ error: 'Filename contains control characters.' });
+            }
+            // Security: Reserved Windows names
+            const reserved = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
+            if (reserved.test(filename)) {
+                return res.status(400).json({ error: 'Reserved filename not allowed.' });
+            }
+            // Security: Path components and traversal
+            if (filename === '.' || filename === '..' || /[\/\\]/.test(filename)) {
+                return res.status(400).json({ error: 'Invalid filename. Contains path components.' });
+            }
+            // Length check
+            if (filename.length > 255) {
+                return res.status(400).json({ error: 'Filename is too long.' });
             }
         }
 
@@ -453,18 +486,12 @@ if (enableUpload) {
             if (typeof clientMaxDownloads !== 'number' || !Number.isInteger(clientMaxDownloads) || clientMaxDownloads < 0) {
                 return res.status(400).json({ error: 'Invalid maxDownloads. Must be a non-negative integer.' });
             }
-            // If server allows unlimited (0), client can choose anything
-            // If server has a limit, client must not exceed it (but can choose 0 for unlimited if server is 0)
             if (maxFileDownloads === 1) {
-                // Server forces single-download, ignore client preference
                 effectiveMaxDownloads = 1;
             } else if (maxFileDownloads === 0) {
-                // Server allows unlimited, client can choose
                 effectiveMaxDownloads = clientMaxDownloads;
             } else {
-                // Server has a limit > 1
                 if (clientMaxDownloads === 0) {
-                    // Client wants unlimited but server has a limit
                     return res.status(400).json({ error: `Server does not allow unlimited downloads. Max: ${maxFileDownloads}.` });
                 }
                 if (clientMaxDownloads > maxFileDownloads) {
@@ -474,21 +501,36 @@ if (enableUpload) {
             }
         }
 
-        const tempFilePath = path.join(tmpDir, uploadId);
-        fs.writeFileSync(tempFilePath, '');
+        // Check Storage Quota (CRITICAL: atomic section to prevent TOCTOU race)
+        const releaseLock = await acquireQuotaLock();
+        try {
+            let reservedSpace = 0;
+            ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
 
-        ongoingUploads.set(uploadId, {
-            filename,
-            isEncrypted,
-            lifetime: Number(lifetime) || 0,
-            maxDownloads: effectiveMaxDownloads,
-            tempFilePath,
-            totalSize: size, // Expected final size
-            totalChunks: chunks, // Expected chunk count
-            receivedChunks: new Set(),
-            reservedBytes: size, // Amount to reserve
-            expiresAt: Date.now() + (2 * 60 * 1000) // 2 minute initial deadline
-        });
+            if ((currentDiskUsage + reservedSpace + size) > MAX_STORAGE_BYTES) {
+                log('debug', `Upload rejected due to insufficient storage. Current usage: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB, Reserved: ${(reservedSpace / 1000 / 1000 / 1000).toFixed(2)} GB, Requested: ${(size / 1000 / 1000 / 1000).toFixed(2)} GB.`);
+                return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
+            }
+
+            // Reserve immediately while holding lock
+            const tempFilePath = path.join(tmpDir, uploadId);
+            fs.writeFileSync(tempFilePath, '');
+
+            ongoingUploads.set(uploadId, {
+                filename,
+                isEncrypted,
+                lifetime: Number(lifetime) || 0,
+                maxDownloads: effectiveMaxDownloads,
+                tempFilePath,
+                totalSize: size,
+                totalChunks: chunks,
+                receivedChunks: new Set(),
+                reservedBytes: size,
+                expiresAt: Date.now() + (2 * 60 * 1000)
+            });
+        } finally {
+            releaseLock();
+        }
 
         log('debug', `Initialised upload. Reserved ${(size / 1000 / 1000).toFixed(2)} MB.`);
         res.status(200).json({ uploadId });
@@ -512,6 +554,11 @@ if (enableUpload) {
 
         if (!Array.isArray(files) || files.length !== fileCount) {
             return res.status(400).json({ error: 'Files array must match fileCount.' });
+        }
+
+        // Bundle file count limit
+        if (fileCount > MAX_BUNDLE_FILES) {
+            return res.status(400).json({ error: `Too many files. Maximum: ${MAX_BUNDLE_FILES}.` });
         }
 
         if (typeof lifetime !== 'number' || !Number.isInteger(lifetime) || lifetime < 0) {
@@ -574,6 +621,10 @@ if (enableUpload) {
                 if (f.filename.length > 255 || /[\/\\]/.test(f.filename)) {
                     return res.status(400).json({ error: `Invalid filename at index ${i}. Contains illegal characters or is too long.` });
                 }
+            }
+            // Check for integer overflow before adding
+            if (!Number.isSafeInteger(totalBundleSize + size)) {
+                return res.status(413).json({ error: 'Bundle size overflow.' });
             }
             totalBundleSize += size;
             const uploadId = uuidv4();
@@ -675,7 +726,7 @@ if (enableUpload) {
             return res.status(400).send('Invalid chunk hash.');
         }
 
-        if (session.receivedChunks.has(chunkIndex)) return res.status(200).send('Chunk already received.');
+        // Note: duplicate chunk check moved to after integrity verification for security
 
         const chunks = [];
         req.on('data', (chunk) => chunks.push(chunk));
@@ -690,19 +741,39 @@ if (enableUpload) {
             const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
             if (serverHash !== clientHash) return res.status(400).send('Integrity check failed.');
 
+            // Security: Mark chunk as received BEFORE writing to prevent duplicate write race
+            // This is CRITICAL - if two requests for the same chunk arrive concurrently,
+            // only the first should write. We check-and-add atomically here.
+            if (session.receivedChunks.has(chunkIndex)) {
+                return res.status(200).send('Chunk already received.');
+            }
+            session.receivedChunks.add(chunkIndex);
+
             // Calculate Offset
             const CHUNK_BASE = uploadChunkSizeBytes;
             const OVERHEAD = session.isEncrypted ? 28 : 0;
             const OFFSET = chunkIndex * (CHUNK_BASE + OVERHEAD);
 
+            // Validate offset doesn't exceed expected file size
+            const maxExpectedOffset = session.totalSize + (session.totalChunks * OVERHEAD);
+            if (OFFSET + buffer.length > maxExpectedOffset) {
+                session.receivedChunks.delete(chunkIndex); // Rollback
+                return res.status(400).send('Chunk offset exceeds file size.');
+            }
+
             // Write
             fs.open(session.tempFilePath, 'r+', (err, fd) => {
-                if (err) return res.status(500).send('File IO error.');
+                if (err) {
+                    session.receivedChunks.delete(chunkIndex); // Rollback on error
+                    return res.status(500).send('File IO error.');
+                }
                 fs.write(fd, buffer, 0, buffer.length, OFFSET, (writeErr) => {
                     fs.close(fd, () => { });
-                    if (writeErr) return res.status(500).send('Write failed.');
+                    if (writeErr) {
+                        session.receivedChunks.delete(chunkIndex); // Rollback on error
+                        return res.status(500).send('Write failed.');
+                    }
 
-                    session.receivedChunks.add(chunkIndex);
                     session.expiresAt = Date.now() + (2 * 60 * 1000); // Reset timeout to 2 mins
 
                     // If this file belongs to a bundle, refresh all sibling upload sessions

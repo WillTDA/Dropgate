@@ -1066,6 +1066,7 @@ var P2P_END_ACK_RETRY_DELAY_MS = 100;
 var P2P_CLOSE_GRACE_PERIOD_MS = 2e3;
 
 // src/p2p/send.ts
+var P2P_UNACKED_CHUNK_TIMEOUT_MS = 3e4;
 function generateSessionId() {
   return crypto.randomUUID();
 }
@@ -1155,6 +1156,10 @@ async function startP2PSend(opts) {
   const unackedChunks = /* @__PURE__ */ new Map();
   let nextSeq = 0;
   let ackResolvers = [];
+  let transferEverStarted = false;
+  const connectionAttempts = [];
+  const MAX_CONNECTION_ATTEMPTS = 10;
+  const CONNECTION_RATE_WINDOW_MS = 1e4;
   const transitionTo = (newState) => {
     if (!ALLOWED_TRANSITIONS[state].includes(newState)) {
       console.warn(`[P2P Send] Invalid state transition: ${state} -> ${newState}`);
@@ -1265,6 +1270,12 @@ async function startP2PSend(opts) {
   const sendChunk = async (conn, data, offset, fileTotal) => {
     if (chunkAcknowledgments) {
       while (unackedChunks.size >= maxUnackedChunks) {
+        const now = Date.now();
+        for (const [_seq, chunk] of unackedChunks) {
+          if (now - chunk.sentAt > P2P_UNACKED_CHUNK_TIMEOUT_MS) {
+            throw new DropgateNetworkError("Receiver stopped acknowledging chunks");
+          }
+        }
         await Promise.race([
           waitForAck(),
           sleep(1e3)
@@ -1321,6 +1332,23 @@ async function startP2PSend(opts) {
   };
   peer.on("connection", (conn) => {
     if (isStopped()) return;
+    const now = Date.now();
+    while (connectionAttempts.length > 0 && connectionAttempts[0] < now - CONNECTION_RATE_WINDOW_MS) {
+      connectionAttempts.shift();
+    }
+    if (connectionAttempts.length >= MAX_CONNECTION_ATTEMPTS) {
+      console.warn("[P2P Send] Connection rate limit exceeded, rejecting connection");
+      try {
+        conn.send({ t: "error", message: "Too many connection attempts. Please wait." });
+      } catch {
+      }
+      try {
+        conn.close();
+      } catch {
+      }
+      return;
+    }
+    connectionAttempts.push(now);
     if (activeConn) {
       const isOldConnOpen = activeConn.open !== false;
       if (isOldConnOpen && state === "transferring") {
@@ -1339,6 +1367,17 @@ async function startP2PSend(opts) {
         } catch {
         }
         activeConn = null;
+        if (transferEverStarted) {
+          try {
+            conn.send({ t: "error", message: "Transfer already started with another receiver. Cannot reconnect." });
+          } catch {
+          }
+          try {
+            conn.close();
+          } catch {
+          }
+          return;
+        }
         state = "listening";
         sentBytes = 0;
         nextSeq = 0;
@@ -1468,6 +1507,7 @@ async function startP2PSend(opts) {
           }, heartbeatIntervalMs);
         }
         transitionTo("transferring");
+        transferEverStarted = true;
         let overallSentBytes = 0;
         for (let fi = 0; fi < files.length; fi++) {
           const currentFile = files[fi];
@@ -1639,6 +1679,10 @@ async function startP2PReceive(opts) {
   let fileList = null;
   let currentFileReceived = 0;
   let totalReceivedAllFiles = 0;
+  let expectedChunkSeq = 0;
+  let writeQueueDepth = 0;
+  const MAX_WRITE_QUEUE_DEPTH = 100;
+  const MAX_FILE_COUNT = 1e4;
   const transitionTo = (newState) => {
     if (!ALLOWED_TRANSITIONS2[state].includes(newState)) {
       console.warn(`[P2P Receive] Invalid state transition: ${state} -> ${newState}`);
@@ -1739,8 +1783,16 @@ async function startP2PReceive(opts) {
     });
     conn.on("data", async (data) => {
       try {
-        resetWatchdog();
         if (data instanceof ArrayBuffer || ArrayBuffer.isView(data) || typeof Blob !== "undefined" && data instanceof Blob) {
+          if (state !== "transferring") {
+            throw new DropgateValidationError(
+              "Received binary data before transfer was accepted. Possible malicious sender."
+            );
+          }
+          resetWatchdog();
+          if (writeQueueDepth >= MAX_WRITE_QUEUE_DEPTH) {
+            throw new DropgateNetworkError("Write queue overflow - receiver cannot keep up");
+          }
           let bufPromise;
           if (data instanceof ArrayBuffer) {
             bufPromise = Promise.resolve(new Uint8Array(data));
@@ -1754,9 +1806,22 @@ async function startP2PReceive(opts) {
             return;
           }
           const chunkSeq = pendingChunk?.seq ?? -1;
+          const expectedSize = pendingChunk?.size;
           pendingChunk = null;
+          writeQueueDepth++;
           writeQueue = writeQueue.then(async () => {
             const buf = await bufPromise;
+            if (expectedSize !== void 0 && buf.byteLength !== expectedSize) {
+              throw new DropgateValidationError(
+                `Chunk size mismatch: expected ${expectedSize}, got ${buf.byteLength}`
+              );
+            }
+            const newReceived = received + buf.byteLength;
+            if (total > 0 && newReceived > total) {
+              throw new DropgateValidationError(
+                `Received more data than expected: ${newReceived} > ${total}`
+              );
+            }
             if (onData) {
               await onData(buf);
             }
@@ -1778,6 +1843,8 @@ async function startP2PReceive(opts) {
             } catch {
             }
             safeError(err2);
+          }).finally(() => {
+            writeQueueDepth--;
           });
           return;
         }
@@ -1789,10 +1856,21 @@ async function startP2PReceive(opts) {
             transitionTo("negotiating");
             onStatus?.({ phase: "waiting", message: "Waiting for file details..." });
             break;
-          case "file_list":
-            fileList = msg;
-            total = fileList.totalSize;
+          case "file_list": {
+            const fileListMsg = msg;
+            if (fileListMsg.fileCount > MAX_FILE_COUNT) {
+              throw new DropgateValidationError(`Too many files: ${fileListMsg.fileCount}`);
+            }
+            const sumSize = fileListMsg.files.reduce((sum, f) => sum + f.size, 0);
+            if (sumSize !== fileListMsg.totalSize) {
+              throw new DropgateValidationError(
+                `File list size mismatch: declared ${fileListMsg.totalSize}, actual sum ${sumSize}`
+              );
+            }
+            fileList = fileListMsg;
+            total = fileListMsg.totalSize;
             break;
+          }
           case "meta": {
             if (state !== "negotiating" && !(state === "transferring" && fileList)) {
               return;
@@ -1854,9 +1932,22 @@ async function startP2PReceive(opts) {
             }
             break;
           }
-          case "chunk":
-            pendingChunk = msg;
+          case "chunk": {
+            const chunkMsg = msg;
+            if (state !== "transferring") {
+              throw new DropgateValidationError(
+                "Received chunk message before transfer was accepted."
+              );
+            }
+            if (chunkMsg.seq !== expectedChunkSeq) {
+              throw new DropgateValidationError(
+                `Chunk sequence error: expected ${expectedChunkSeq}, got ${chunkMsg.seq}`
+              );
+            }
+            expectedChunkSeq++;
+            pendingChunk = chunkMsg;
             break;
+          }
           case "ping":
             try {
               conn.send({ t: "pong", timestamp: Date.now() });

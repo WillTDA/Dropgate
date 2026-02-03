@@ -23,6 +23,9 @@ import {
   type P2PFileEndAckMessage,
 } from './protocol.js';
 
+// Timeout for detecting stalled receivers that stop sending acks
+const P2P_UNACKED_CHUNK_TIMEOUT_MS = 30000;
+
 /**
  * Generate a unique session ID for transfer tracking.
  */
@@ -171,6 +174,14 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   const unackedChunks = new Map<number, { offset: number; size: number; sentAt: number }>();
   let nextSeq = 0;
   let ackResolvers: Array<() => void> = [];
+
+  // Track if transfer ever started to prevent connection replacement attacks
+  let transferEverStarted = false;
+
+  // Security: Connection rate limiting to prevent DoS attacks
+  const connectionAttempts: number[] = []; // Timestamps of recent connection attempts
+  const MAX_CONNECTION_ATTEMPTS = 10; // Max attempts allowed
+  const CONNECTION_RATE_WINDOW_MS = 10000; // 10 second sliding window
 
   /**
    * Attempt a state transition. Returns true if transition was valid.
@@ -338,6 +349,14 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
     // Wait if too many unacknowledged chunks (flow control)
     if (chunkAcknowledgments) {
       while (unackedChunks.size >= maxUnackedChunks) {
+        // Security: Check for stale unacked chunks (receiver stopped responding)
+        const now = Date.now();
+        for (const [_seq, chunk] of unackedChunks) {
+          if (now - chunk.sentAt > P2P_UNACKED_CHUNK_TIMEOUT_MS) {
+            throw new DropgateNetworkError('Receiver stopped acknowledging chunks');
+          }
+        }
+
         await Promise.race([
           waitForAck(),
           sleep(1000), // Timeout to prevent deadlock
@@ -412,6 +431,29 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
   peer.on('connection', (conn: DataConnection) => {
     if (isStopped()) return;
 
+    // Security: Connection rate limiting
+    const now = Date.now();
+    // Remove old attempts outside the sliding window
+    while (connectionAttempts.length > 0 && connectionAttempts[0] < now - CONNECTION_RATE_WINDOW_MS) {
+      connectionAttempts.shift();
+    }
+    // Check if we've exceeded the rate limit
+    if (connectionAttempts.length >= MAX_CONNECTION_ATTEMPTS) {
+      console.warn('[P2P Send] Connection rate limit exceeded, rejecting connection');
+      try {
+        conn.send({ t: 'error', message: 'Too many connection attempts. Please wait.' });
+      } catch {
+        // Ignore send errors
+      }
+      try {
+        conn.close();
+      } catch {
+        // Ignore close errors
+      }
+      return;
+    }
+    connectionAttempts.push(now);
+
     // Connection replacement logic - allow new connections if old one is dead
     if (activeConn) {
       // Check if existing connection is actually still open
@@ -432,14 +474,32 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
         }
         return;
       } else if (!isOldConnOpen) {
-        // Old connection is dead, clean it up and accept new one
+        // Old connection is dead, clean it up
         try {
           activeConn.close();
         } catch {
           // Ignore
         }
         activeConn = null;
-        // Reset state to allow new transfer
+
+        // Security: Never allow reconnection if transfer ever started
+        // This prevents race condition attacks where receiver disconnects briefly
+        // and reconnects to restart transfer and corrupt data
+        if (transferEverStarted) {
+          try {
+            conn.send({ t: 'error', message: 'Transfer already started with another receiver. Cannot reconnect.' });
+          } catch {
+            // Ignore send errors
+          }
+          try {
+            conn.close();
+          } catch {
+            // Ignore close errors
+          }
+          return;
+        }
+
+        // Reset state to allow new transfer (only if never started transferring)
         state = 'listening';
         sentBytes = 0;
         nextSeq = 0;
@@ -615,6 +675,7 @@ export async function startP2PSend(opts: P2PSendOptions): Promise<P2PSendSession
         }
 
         transitionTo('transferring');
+        transferEverStarted = true; // Security: Mark that transfer has started
 
         let overallSentBytes = 0;
 
