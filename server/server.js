@@ -984,7 +984,7 @@ if (enableUpload) {
         }
 
         ongoingBundles.delete(bundleUploadId);
-        log('debug', `Bundle created${bundleSession.sealedManifest ? ' (sealed)' : ''} (${bundleSession.fileCount} files, ${(totalSizeBytes / 1000 / 1000).toFixed(2)} MB total).`);
+        log('debug', `Bundle created${bundleSession.sealedManifest ? ' (sealed)' : ''} (${bundleSession.fileCount} files, ${(totalSizeBytes / 1000 / 1000).toFixed(2)} MB total). Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.`);
         res.status(200).json({ bundleId });
     });
 
@@ -1150,7 +1150,7 @@ if (enableUpload) {
                     }
                 }
                 await bundleDatabase.delete(bundleId);
-                log('debug', `Bundle downloaded and deleted (${newDownloadCount}/${maxDl} downloads).`);
+                log('debug', `Bundle downloaded and deleted (${newDownloadCount}/${maxDl} downloads). Server capacity: ${(currentDiskUsage / 1000 / 1000 / 1000).toFixed(2)} GB / ${maxStorageGB} GB.`);
             }
         } else {
             await bundleDatabase.set(bundleId, { ...bundleInfo, downloadCount: newDownloadCount });
