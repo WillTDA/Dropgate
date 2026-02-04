@@ -144,7 +144,7 @@ async function startDownload() {
         : `Your file "${downloadState.fileName}" has been successfully saved.`,
     });
   } catch (error) {
-    console.error(error);
+    if (error) console.error(error);
     resetTitleProgress();
     progressContainer.style.display = 'none';
     downloadButton.textContent = 'Retry Download';

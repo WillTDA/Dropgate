@@ -324,7 +324,7 @@ async function downloadAllAsZip() {
         : `All ${bundleState.files.length} files have been saved as "${zipName}".`,
     });
   } catch (error) {
-    console.error(error);
+    if (error) console.error(error);
     progressContainer.style.display = 'none';
     progressFileName.textContent = '';
     downloadActions.style.display = 'block';
@@ -337,7 +337,7 @@ async function downloadAllAsZip() {
       titleEl: statusTitle,
       messageEl: statusMessage,
       title: 'Download Failed',
-      message: error.message || 'The bundle may have expired, or the download failed.',
+      message: error?.message || 'The bundle may have expired, or the download failed.',
     });
   }
 }
