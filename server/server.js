@@ -399,6 +399,18 @@ if (enableUpload) {
         return limiter(req, res, next);
     };
 
+    const downloadAuth = async (req, res, next) => {
+        const fileId = req.params.fileId;
+        const bundleId = req.params.bundleId;
+        if (fileId) {
+            if (await fileDatabase.has(fileId)) return next();
+        }
+        if (bundleId) {
+            if (await bundleDatabase.has(bundleId)) return next();
+        }
+        return limiter(req, res, next);
+    };
+
     uploadRouter.post('/init', limiter, async (req, res) => {
         const uploadId = uuidv4();
         const { filename, lifetime, isEncrypted, totalSize, totalChunks, maxDownloads: clientMaxDownloads } = req.body;
@@ -976,7 +988,7 @@ if (enableUpload) {
         res.status(200).json({ bundleId });
     });
 
-    apiRouter.get('/file/:fileId/meta', limiter, async (req, res) => {
+    apiRouter.get('/file/:fileId/meta', downloadAuth, async (req, res) => {
         const fileId = req.params.fileId;
         const fileInfo = await fileDatabase.get(fileId);
 
@@ -1009,7 +1021,7 @@ if (enableUpload) {
         res.status(200).json(payload);
     });
 
-    apiRouter.get('/file/:fileId', limiter, async (req, res) => {
+    apiRouter.get('/file/:fileId', downloadAuth, async (req, res) => {
         const fileId = req.params.fileId;
         const fileInfo = await fileDatabase.get(fileId);
 
@@ -1066,7 +1078,7 @@ if (enableUpload) {
 
     // ===== Bundle API Endpoints =====
 
-    apiRouter.get('/bundle/:bundleId/meta', limiter, async (req, res) => {
+    apiRouter.get('/bundle/:bundleId/meta', downloadAuth, async (req, res) => {
         const bundleId = req.params.bundleId;
         const bundleInfo = await bundleDatabase.get(bundleId);
 
@@ -1107,7 +1119,7 @@ if (enableUpload) {
         res.status(200).json(payload);
     });
 
-    apiRouter.post('/bundle/:bundleId/downloaded', limiter, async (req, res) => {
+    apiRouter.post('/bundle/:bundleId/downloaded', downloadAuth, async (req, res) => {
         const bundleId = req.params.bundleId;
         const bundleInfo = await bundleDatabase.get(bundleId);
 
