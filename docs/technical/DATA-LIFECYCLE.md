@@ -3,7 +3,7 @@
 **Dropgate Data Processing, Storage, and Privacy Documentation**
 
 Version: 3.0.0
-Last Updated: 2025-02-02
+Last Updated: 2026-02-05
 
 ---
 
@@ -316,20 +316,16 @@ sequenceDiagram
     else File found
         DB-->>Server: file record
 
-        alt Expired
-            Note over Server: expiresAt < Date.now()
-            Server->>FS: Delete file
-            Server->>DB: Delete record
-            Server-->>Client: 404 Not Found (expired)
-        else maxDownloads exceeded
-            Note over Server: downloadCount >= maxDownloads
-            Server-->>Client: 410 Gone (already consumed)
         else Valid
             Server->>FS: Read file stream
             FS-->>Server: Binary chunks
             Server-->>Client: Stream file data
 
-            alt maxDownloads > 0
+            alt File belongs to bundle
+                Note over Server: No download count increment<br/>Bundle tracks downloads separately
+            else maxDownloads = 0 (unlimited)
+                Note over Server: No count tracking
+            else maxDownloads > 0
                 Server->>Server: Increment downloadCount
 
                 alt downloadCount >= maxDownloads
@@ -347,13 +343,14 @@ sequenceDiagram
 ### Download Validation Checks
 
 **Pre-download checks** (in order):
-1. **File exists**: `fileDatabase.get(fileId) !== null`
-2. **Not expired**: `expiresAt === null || expiresAt > Date.now()`
-3. **Downloads available**: `maxDownloads === 0 || downloadCount < maxDownloads`
+1. **File exists in DB**: `fileDatabase.get(fileId) !== null`
+2. **E2EE check**: If file is encrypted and `UPLOAD_ENABLE_E2EE` is disabled, return 404
+3. **File exists on disk**: `fs.statSync(fileInfo.path)` succeeds
+
+> **Note**: Expiration is NOT checked inline during downloads. Expired files are cleaned up by the `cleanupExpiredFiles()` timer (every 60s). Download limits are enforced post-download: once `downloadCount >= maxDownloads`, the file is deleted, so subsequent requests will hit check #1 (404). The server never returns 410 Gone.
 
 **Response codes**:
-- `404 Not Found`: File doesn't exist or expired
-- `410 Gone`: Download limit exceeded
+- `404 Not Found`: File doesn't exist, already deleted (expiry or download limit), or E2EE disabled
 - `200 OK`: File streamed successfully
 
 ### Post-Download Actions
@@ -382,25 +379,19 @@ if (maxDl > 0 && newDownloadCount >= maxDl) {
 
 ### Cleanup Process Timing
 
-```mermaid
-gantt
-    title Cleanup Process Intervals
-    dateFormat ss
-    axisFormat %S
+```
+Cleanup Timing Overview:
 
-    section Expired Files
-    Check files :done, ef1, 00, 60s
-    Check files :done, ef2, 60, 60s
-    Check files :active, ef3, 120, 60s
+Expired Files Timer:        Every 60 seconds
+├── 0s ──── 60s ──── 120s ──── 180s ──── 240s ──── 300s ────→
+    [scan]   [scan]   [scan]    [scan]    [scan]    [scan]
 
-    section Zombie Uploads
-    Check zombies :done, zu1, 00, 300s
-    Check zombies :active, zu2, 300, 300s
+Zombie Uploads Timer:       Every 300 seconds (5 min)
+├── 0s ─────────────────────────────────── 300s ────────────→
+    [scan]                                  [scan]
 
-    section Download-Triggered
-    Delete on download :milestone, 00, 0s
-    Delete on download :milestone, 45, 0s
-    Delete on download :milestone, 135, 0s
+Download-Triggered:         Immediate (event-driven)
+├── on download ──→ check downloadCount ──→ delete if maxed
 ```
 
 ### Cleanup Mechanisms Table
@@ -417,41 +408,52 @@ gantt
 **Interval**: Every 60 seconds
 
 ```javascript
-function cleanupExpiredFiles() {
+async function cleanupExpiredFiles() {
   const now = Date.now();
 
-  // Check files
-  for (const [fileId, fileRecord] of fileDatabase.entries()) {
-    if (fileRecord.expiresAt && fileRecord.expiresAt < now) {
-      fs.rm(fileRecord.path, { force: true });
-      fileDatabase.delete(fileId);
-      currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
+  // Check files (QuickDB .all() returns Array<{ id, value }>)
+  const allFiles = await fileDatabase.all();
+  for (const record of allFiles) {
+    if (record.value?.expiresAt && record.value.expiresAt < now) {
+      // Skip files that belong to a bundle (cleaned up with the bundle)
+      if (record.value.bundleId) continue;
+
+      const stats = fs.statSync(record.value.path);
+      currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+      fs.rmSync(record.value.path, { force: true });
+      await fileDatabase.delete(record.id);
     }
   }
 
   // Check bundles
-  for (const [bundleId, bundleRecord] of bundleDatabase.entries()) {
-    if (bundleRecord.expiresAt && bundleRecord.expiresAt < now) {
-      if (!bundleRecord.sealed && bundleRecord.files) {
+  const allBundles = await bundleDatabase.all();
+  for (const record of allBundles) {
+    if (record.value?.expiresAt && record.value.expiresAt < now) {
+      if (record.value.sealed) {
+        // Sealed: just delete manifest record (member files are independent)
+      } else {
         // Unsealed: cascade-delete all member files
-        for (const file of bundleRecord.files) {
-          const fileRecord = fileDatabase.get(file.fileId);
-          if (fileRecord) {
-            fs.rm(fileRecord.path, { force: true });
-            fileDatabase.delete(file.fileId);
+        for (const f of (record.value.files || [])) {
+          const fileInfo = await fileDatabase.get(f.fileId);
+          if (fileInfo) {
+            const stats = fs.statSync(fileInfo.path);
+            currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+            fs.rmSync(fileInfo.path, { force: true });
+            await fileDatabase.delete(f.fileId);
           }
         }
       }
       // Delete bundle record (sealed or unsealed)
-      bundleDatabase.delete(bundleId);
+      await bundleDatabase.delete(record.id);
     }
   }
 }
 ```
 
 **Key behavior**:
+- **Files with `bundleId`**: Skipped by file cleanup (cleaned up with the bundle instead)
 - **Unsealed bundles**: Cascade-delete all member files
-- **Sealed bundles**: Delete only manifest (files expire independently)
+- **Sealed bundles**: Delete only manifest record (member files have no `bundleId` and expire independently via the file cleanup loop)
 
 *Source: [server.js:1282-1325](../../server/server.js#L1282-L1325)*
 
@@ -490,12 +492,14 @@ function cleanupZombieUploads() {
         }
       }
 
-      // Delete any already-completed files
-      for (const completedFile of bundleSession.completedFileResults) {
-        const fileRecord = fileDatabase.get(completedFile.fileId);
-        if (fileRecord) {
-          fs.rmSync(fileRecord.path, { force: true });
-          fileDatabase.delete(completedFile.fileId);
+      // Delete any already-completed files from this bundle
+      for (const result of (bundleSession.completedFileResults || [])) {
+        const fileInfo = fileDatabase.get(result.fileId);
+        if (fileInfo) {
+          const stats = fs.statSync(fileInfo.path);
+          currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+          fs.rmSync(fileInfo.path, { force: true });
+          fileDatabase.delete(result.fileId);
         }
       }
 
@@ -511,17 +515,29 @@ function cleanupZombieUploads() {
 
 ### Cleanup Mechanism 3: Download-Triggered
 
-**Trigger**: After successful file download
+**Trigger**: After successful file download (in the `readStream.on('close')` handler)
 **Condition**: `maxDownloads > 0 && downloadCount >= maxDownloads`
 
 ```javascript
-// Executed inline during download response
+// Skip download counting for bundle member files
+// (bundle downloads tracked separately via /api/bundle/:bundleId/downloaded)
+if (fileInfo.bundleId) return;
+
+const newDownloadCount = (fileInfo.downloadCount || 0) + 1;
+const maxDl = fileInfo.maxDownloads ?? 1;
+
 if (maxDl > 0 && newDownloadCount >= maxDl) {
-  fs.rm(fileRecord.path, { force: true });
-  fileDatabase.delete(fileId);
   currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
+  fs.rm(fileInfo.path, { force: true }, () => {});
+  await fileDatabase.delete(fileId);
+} else {
+  await fileDatabase.set(fileId, { ...fileInfo, downloadCount: newDownloadCount });
 }
 ```
+
+**Bundle downloads**: Bundles track downloads separately via `POST /api/bundle/:bundleId/downloaded`. When the download limit is reached:
+- **Sealed bundles**: Only the manifest record is deleted. Member files expire independently.
+- **Unsealed bundles**: All member files and the bundle record are deleted.
 
 **Use cases**:
 - **One-time downloads** (`maxDownloads = 1`): Self-destruct after first download
@@ -714,19 +730,26 @@ access_log off;
 
 **Database initialization**:
 ```javascript
-const fileDatabase = new QuickDB({ filePath: ':memory:' });
-const bundleDatabase = new QuickDB({ filePath: ':memory:' });
+const fileDatabase = new QuickDB({ driver: new MemoryDriver() });
+const bundleDatabase = new QuickDB({ driver: new MemoryDriver() });
 ```
 
 **Cleanup on shutdown**:
 ```javascript
-process.on('SIGINT', () => {
-  if (!UPLOAD_PRESERVE_UPLOADS) {
-    fs.rmSync('/server/uploads/', { recursive: true, force: true });
+const handleShutdown = () => {
+  if (enableUpload && !preserveUploads) {
+    cleanupDir(tmpDir);    // Delete temp files
+    cleanupDir(uploadDir); // Delete all uploaded files
   }
-  process.exit(0);
-});
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 1500).unref();
+};
+
+process.on('SIGINT', handleShutdown);
+process.on('SIGTERM', handleShutdown);
 ```
+
+> **Note**: `cleanupDir()` iterates directory entries and deletes each file/directory individually using `fs.rmSync()` with `{ recursive: true, force: true }`. It does not delete the upload directory itself.
 
 **Characteristics**:
 - Maximum privacy (all data lost on restart)

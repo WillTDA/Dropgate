@@ -3,7 +3,7 @@
 **Dropgate Architecture, Integration, and Deployment**
 
 Version: 3.0.0
-Last Updated: 2025-02-02
+Last Updated: 2026-02-05
 
 ---
 
@@ -41,7 +41,7 @@ Dropgate/
 │   │   │   ├── p2p/            # DGDTP protocol implementation
 │   │   │   └── zip/            # ZIP streaming
 │   │   └── package.json
-│   └── dropgate-client/        # Electron desktop app
+├── client/                        # Electron desktop app (separate)
 ├── server/                     # Node.js + Express server
 │   ├── server.js               # Main server entry point
 │   ├── public/                 # Web UI static files
@@ -112,12 +112,15 @@ flowchart TD
 ```typescript
 import { DropgateClient } from '@dropgate/core';
 
-const client = new DropgateClient({ baseUrl: 'https://dropgate.link' });
+const client = new DropgateClient({
+  clientVersion: '3.0.0',
+  server: 'https://dropgate.link'
+});
 
 // Upload file (DGUP)
 const result = await client.uploadFiles({
   files: [file],
-  encrypted: true
+  encrypt: true
 });
 
 // P2P send (DGDTP)
@@ -154,7 +157,7 @@ const session = await client.p2pSend({
 - Download management
 - Clipboard integration
 
-*Source: [packages/dropgate-client/](../../packages/dropgate-client/)*
+*Source: [client/](../../client/)*
 
 ### Web UI
 
@@ -177,13 +180,13 @@ const session = await client.p2pSend({
 | Endpoint | Method | Purpose | Auth Required | Request Body | Response |
 |----------|--------|---------|---------------|--------------|----------|
 | **Server Info** | | | | | |
-| `/api/info` | GET | Server capabilities and version | No | - | `{ version, capabilities }` |
-| `/api/resolve` | POST | Validate sharing code/URL | No | `{ input }` | `{ type, ... }` |
+| `/api/info` | GET | Server capabilities and version | No | - | `{ name, version, logLevel, capabilities }` |
+| `/api/resolve` | POST | Validate sharing code/URL | No | `{ value }` | `{ valid, type, target }` |
 | **DGUP Protocol** | | | | | |
 | `/upload/init` | POST | Initialize single file upload | No | `{ filename, lifetime, isEncrypted, totalSize, totalChunks, maxDownloads }` | `{ uploadId }` |
 | `/upload/init-bundle` | POST | Initialize bundle upload | No | `{ fileCount, files[], lifetime, isEncrypted, maxDownloads }` | `{ bundleUploadId, fileUploadIds[] }` |
 | `/upload/chunk` | POST | Upload file chunk | No (session-based) | Binary blob + Headers | `200 OK` |
-| `/upload/complete` | POST | Finalize file upload | No (session-based) | `{ uploadId }` | `{ fileId }` |
+| `/upload/complete` | POST | Finalize file upload | No (session-based) | `{ uploadId }` | `{ id }` |
 | `/upload/complete-bundle` | POST | Finalize bundle upload | No (session-based) | `{ bundleUploadId, encryptedManifest? }` | `{ bundleId }` |
 | `/upload/cancel` | POST | Cancel upload session | No (session-based) | `{ uploadId }` | `200 OK` |
 | **File Download** | | | | | |
@@ -201,7 +204,7 @@ const session = await client.p2pSend({
 | `200` | Success | Upload chunk accepted, file downloaded |
 | `400` | Bad Request | Invalid parameters, hash mismatch |
 | `404` | Not Found | File doesn't exist or expired |
-| `410` | Gone | Download limit exceeded |
+| `410` | Gone | Upload session expired (chunk/complete endpoints only) |
 | `413` | Payload Too Large | File size exceeds limit |
 | `507` | Insufficient Storage | Server out of capacity |
 
@@ -225,7 +228,7 @@ flowchart LR
     end
 
     subgraph "Dropgate Server"
-        EXPRESS["Express Server<br/>:3000"]
+        EXPRESS["Express Server<br/>:52443"]
         PEERJS_SRV["PeerJS Server<br/>/peerjs"]
         UPLOADS["File Storage<br/>/uploads/"]
         DB["SQLite DBs<br/>/uploads/db/"]
@@ -266,7 +269,8 @@ flowchart LR
 | Category | Variable | Type | Default | Description |
 |----------|----------|------|---------|-------------|
 | **General** | | | | |
-| | `PORT` | number | `3000` | Server port |
+| | `SERVER_PORT` | number | `52443` | Server port |
+| | `SERVER_NAME` | string | `Dropgate Server` | Display name shown in Web UI and `/api/info` |
 | | `LOG_LEVEL` | string | `INFO` | Logging verbosity: `NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG` |
 | | `NODE_ENV` | string | `development` | Environment: `development`, `production` |
 | **Upload (DGUP)** | | | | |
@@ -291,7 +295,7 @@ flowchart LR
 
 **Maximum privacy**:
 ```bash
-PORT=3000
+SERVER_PORT=52443
 LOG_LEVEL=ERROR                      # Minimal logging
 ENABLE_UPLOAD=true
 UPLOAD_PRESERVE_UPLOADS=false        # Clear on restart
@@ -302,7 +306,7 @@ ENABLE_P2P=true
 
 **Production long-term hosting**:
 ```bash
-PORT=3000
+SERVER_PORT=52443
 LOG_LEVEL=WARN
 ENABLE_UPLOAD=true
 UPLOAD_PRESERVE_UPLOADS=true         # Persistent storage
@@ -314,7 +318,7 @@ ENABLE_P2P=true
 
 **Disabled uploads, P2P only**:
 ```bash
-PORT=3000
+SERVER_PORT=52443
 ENABLE_UPLOAD=false                  # No hosted uploads
 ENABLE_P2P=true                      # P2P only
 ```
@@ -351,7 +355,7 @@ server {
 
     # Main proxy
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://localhost:52443;
         proxy_http_version 1.1;
 
         # WebSocket support for PeerJS
@@ -372,7 +376,7 @@ server {
 
     # PeerJS signaling (explicit WebSocket support)
     location /peerjs/ {
-        proxy_pass http://localhost:3000/peerjs/;
+        proxy_pass http://localhost:52443/peerjs/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -385,7 +389,7 @@ server {
 ```caddyfile
 dropgate.example.com {
     # Automatic HTTPS
-    reverse_proxy localhost:3000
+    reverse_proxy localhost:52443
 
     # Don't log (privacy)
     log {
@@ -410,12 +414,12 @@ services:
     restart: unless-stopped
 
     ports:
-      - "3000:3000"
+      - "52443:52443"
 
     environment:
       # General
       - NODE_ENV=production
-      - PORT=3000
+      - SERVER_PORT=52443
       - LOG_LEVEL=WARN
 
       # Upload
@@ -467,7 +471,7 @@ COPY . .
 RUN npm run build
 
 # Expose port
-EXPOSE 3000
+EXPOSE 52443
 
 # Start server
 CMD ["node", "server/server.js"]

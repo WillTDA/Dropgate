@@ -4,7 +4,7 @@
 
 Version: 3 (Protocol v3)
 Protocol Identifier: DGDTP
-Last Updated: 2025-02-02
+Last Updated: 2026-02-05
 
 ---
 
@@ -210,7 +210,7 @@ for (let attempt = 0; attempt < maxAttempts; attempt++) {  // default: 4
 | `hello` | Bidirectional | `protocolVersion: number`<br/>`sessionId: string` | - | Initial handshake, version negotiation |
 | `file_list` | Sender → Receiver | `fileCount: number`<br/>`files: Array<{name, size, mime}>`<br/>`totalSize: number` | - | v3: Multi-file manifest sent after handshake |
 | `meta` | Sender → Receiver | `sessionId: string`<br/>`name: string`<br/>`size: number`<br/>`mime: string` | `fileIndex?: number` | File metadata (single-file or before each file in multi-file) |
-| `ready` | Receiver → Sender | - | - | Receiver ready to receive data (user confirmed) |
+| `ready` | Receiver → Sender | - | - | Receiver ready to receive data (sent once for first file only) |
 | `chunk` | Sender → Receiver | `seq: number`<br/>`offset: number`<br/>`size: number`<br/>`total: number` | - | Chunk header (binary data follows immediately) |
 | `chunk_ack` | Receiver → Sender | `seq: number`<br/>`received: number` | - | Acknowledge chunk receipt, flow control |
 | `file_end` | Sender → Receiver | `fileIndex: number` | `attempt?: number` | v3: Current file fully sent |
@@ -347,8 +347,13 @@ sequenceDiagram
 
     loop For each file (i = 0 to 2)
         S->>R: meta { sessionId, name, size, mime, fileIndex: i }
-        Note over R: Trigger onFileStart(i)<br/>Create ZIP entry
-        R->>S: ready
+        alt First file (i = 0)
+            Note over R: Trigger onMeta + onFileStart(0)
+            R->>S: ready
+            Note over S,R: State: negotiating → transferring
+        else Subsequent files (i > 0)
+            Note over R: Trigger onFileStart(i)<br/>No ready signal needed
+        end
 
         loop Chunks for file i
             S->>R: chunk { seq, offset, size, total }
@@ -373,9 +378,10 @@ sequenceDiagram
 
 1. **file_list message**: Sent once after handshake with all file metadata
 2. **Per-file boundaries**: Each file has `meta` → chunks → `file_end` → `file_end_ack`
-3. **Sequential transfer**: Files sent one at a time, not parallel
-4. **ZIP assembly**: Receiver streams files into a single ZIP archive
-5. **Progress tracking**: Separate callbacks for `onFileStart`, `onFileEnd`
+3. **Single ready signal**: `ready` is only sent once (for the first file). Subsequent files begin automatically after `file_end_ack` without another `ready` exchange
+4. **Sequential transfer**: Files sent one at a time, not parallel
+5. **ZIP assembly**: Receiver streams files into a single ZIP archive
+6. **Progress tracking**: Separate callbacks for `onFileStart`, `onFileEnd`
 
 *Source: [protocol.ts:59-64](../../packages/dropgate-core/src/p2p/protocol.ts)*
 
@@ -498,6 +504,7 @@ flowchart TD
 | `P2P_MAX_UNACKED_CHUNKS` | 32 | Max unacknowledged chunks before backpressure |
 | `P2P_END_ACK_TIMEOUT_MS` | 15000 (15s) | Timeout waiting for end acknowledgment |
 | `P2P_END_ACK_RETRIES` | 3 | Number of times to retry sending `end` |
+| `P2P_END_ACK_RETRY_DELAY_MS` | 100 (100ms) | Delay between redundant receiver `end_ack` sends |
 | `P2P_CLOSE_GRACE_PERIOD_MS` | 2000 (2s) | Grace period after connection close |
 
 *Source: [protocol.ts:240-270](../../packages/dropgate-core/src/p2p/protocol.ts)*
@@ -553,7 +560,7 @@ this.unackedChunks.delete(ackSeq);
 **Sender**:
 ```typescript
 setInterval(() => {
-  if (state === 'transferring') {
+  if (state === 'transferring' || state === 'finishing' || state === 'awaiting_ack') {
     conn.send({
       t: 'ping',
       timestamp: Date.now()
@@ -561,6 +568,8 @@ setInterval(() => {
   }
 }, heartbeatIntervalMs);
 ```
+
+> **Note**: The heartbeat runs during `transferring`, `finishing`, and `awaiting_ack` states — not just during `transferring`. This ensures the connection stays alive while waiting for the final `end_ack` confirmation.
 
 **Receiver**:
 ```typescript
@@ -582,22 +591,26 @@ if (msg.t === 'ping') {
 **Timeout**: 15000ms (default, configurable via `watchdogTimeoutMs`)
 
 ```typescript
-private lastActivityAt: number;
+let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
-// On any message received
-this.lastActivityAt = Date.now();
+// Reset watchdog on any data received
+const resetWatchdog = (): void => {
+  if (watchdogTimer) clearTimeout(watchdogTimer);
 
-// Watchdog check (every 1s)
-setInterval(() => {
-  if (Date.now() - this.lastActivityAt > watchdogTimeoutMs) {
-    this.handleError(new DropgateNetworkError('Connection timed out'));
-  }
-}, 1000);
+  watchdogTimer = setTimeout(() => {
+    if (state === 'transferring') {
+      safeError(new DropgateNetworkError('Connection timed out (no data received).'));
+    }
+  }, watchdogTimeoutMs);
+};
 ```
+
+> **Note**: The watchdog uses `setTimeout` (not `setInterval`). It is reset each time data is received — any message, chunk, or heartbeat resets the countdown. If the timer fires without being reset, the connection is considered dead.
 
 **Triggers timeout if**:
 - No chunks received for 15 seconds
 - No heartbeat (`ping`) received for 15 seconds
+- No activity of any kind for 15 seconds
 
 *Source: [receive.ts:watchdog](../../packages/dropgate-core/src/p2p/receive.ts)*
 
@@ -636,16 +649,26 @@ this.setState('cancelled');
 
 **Receiver redundant sends**:
 ```typescript
-// Send end_ack 3 times with delays
-for (let i = 0; i < 3; i++) {
-  await sleep(100);  // 100ms delay between sends
-  conn.send({
-    t: 'end_ack',
-    received: this.totalBytesReceived,
-    total: this.expectedTotal
-  });
-}
+// 1. Send end_ack immediately
+conn.send({ t: 'end_ack', received: finalReceived, total: finalTotal });
+
+// 2. Mark as completed immediately (before redundant sends)
+safeComplete({ received: finalReceived, total: finalTotal });
+
+// 3. Send 2 additional acks (fire-and-forget, best effort)
+(async () => {
+  for (let i = 0; i < 2; i++) {
+    await sleep(P2P_END_ACK_RETRY_DELAY_MS); // 100ms
+    try {
+      conn.send({ t: 'end_ack', received: finalReceived, total: finalTotal });
+    } catch {
+      break; // Connection closed
+    }
+  }
+})().catch(() => {});
 ```
+
+> **Note**: The receiver marks the transfer as complete after the first `end_ack` send, then fires 2 additional sends as best-effort redundancy. This ensures the `onComplete` callback fires promptly while still improving delivery reliability.
 
 **Purpose**: Increase reliability in face of packet loss near connection close.
 
@@ -690,7 +713,7 @@ if (msg.sessionId !== this.sessionId) {
 
 **Sharing code acts as authentication**:
 - Code is randomly generated (cryptographically secure)
-- Collision probability is low (26^4 * 10^4 = ~45 million combinations)
+- Collision probability is low (24^4 * 10^4 ≈ 3.3 million combinations)
 - Code is single-use per session
 - Requires out-of-band communication (user must share code via other channel)
 
@@ -822,7 +845,7 @@ zipWriter.finalize();
 
 ```typescript
 onFileStart: (evt: { fileIndex: number; name: string; size: number }) => void;
-onFileEnd: (evt: { fileIndex: number; totalFiles: number }) => void;
+onFileEnd: (evt: { fileIndex: number; receivedBytes: number }) => void;
 onProgress: (evt: { percent: number; processedBytes: number; totalBytes: number }) => void;
 ```
 
@@ -888,15 +911,16 @@ const session = await client.p2pReceive({
   onMeta: (evt: {
     name: string;
     total: number;
-    mime: string;
-    sendReady: () => void;        // Call to start transfer
-    files?: Array<{ name, size, mime }>;  // Multi-file: file list
+    sendReady?: () => void;       // Present when autoReady=false; call to start transfer
+    fileCount?: number;           // Multi-file: number of files
+    files?: Array<{ name, size }>;  // Multi-file: file list (name + size only)
+    totalSize?: number;           // Multi-file: total size across all files
     fileCount?: number;            // Multi-file: file count
   }) => void,
-  onData: (chunk: ArrayBuffer) => Promise<void> | void,  // Consumer writes chunk
+  onData: (chunk: Uint8Array) => Promise<void> | void,  // Consumer writes chunk
   onFileStart?: (evt: { fileIndex, name, size }) => void,
-  onFileEnd?: (evt: { fileIndex, totalFiles }) => void,
-  onComplete?: (evt: { totalBytes }) => void,
+  onFileEnd?: (evt: { fileIndex, receivedBytes }) => void,
+  onComplete?: (evt: { received, total }) => void,
   onProgress?: (evt: ProgressEvent) => void,
   onError?: (err: Error) => void,
   onCancel?: (evt: { cancelledBy: string }) => void,

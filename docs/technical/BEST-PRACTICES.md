@@ -3,7 +3,7 @@
 **Security, Privacy, Deployment, and Operational Best Practices**
 
 Version: 3.0.0
-Last Updated: 2025-02-02
+Last Updated: 2026-02-05
 
 ---
 
@@ -258,7 +258,7 @@ services:
       - /app/server/uploads/tmp
 
     ports:
-      - "127.0.0.1:3000:3000"  # Bind to localhost only
+      - "127.0.0.1:52443:52443"  # Bind to localhost only
 
     environment:
       - NODE_ENV=production
@@ -281,7 +281,7 @@ services:
 
     # Health check
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/info"]
+      test: ["CMD", "curl", "-f", "http://localhost:52443/api/info"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -437,7 +437,7 @@ iotop
 iftop
 
 # Application metrics
-curl http://localhost:3000/api/info | jq .
+curl http://localhost:52443/api/info | jq .
 ```
 
 **Prometheus + Grafana** (advanced):

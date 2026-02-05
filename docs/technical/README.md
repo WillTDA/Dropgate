@@ -57,7 +57,7 @@ This directory contains comprehensive technical specifications for Dropgate's pr
 - ✅ **Protocol v3 multi-file support**: Sequential file transfer with boundaries
 - ✅ **Flow control**: Chunk acknowledgments + buffer management
 - ✅ **Reliability**: End-ack retries, heartbeat, watchdog timeout
-- ✅ **9-digit sharing codes**: Format `XXXX-0000` (e.g., `ABCD-1234`)
+- ✅ **8-character sharing codes**: Format `XXXX-0000` (e.g., `ABCD-1234`, 24 letters + 4 digits)
 
 ---
 
@@ -67,7 +67,7 @@ All protocols are implemented in the Dropgate monorepo:
 
 - **Client SDK**: [/packages/dropgate-core/](../../packages/dropgate-core/) (headless TypeScript library)
 - **Server**: [/server/](../../server/) (Node.js + Express)
-- **Electron App**: [/packages/dropgate-client/](../../packages/dropgate-client/)
+- **Electron App**: [/client/](../../client/)
 - **Web UI**: [/server/public/](../../server/public/)
 
 ---
@@ -159,7 +159,7 @@ We welcome security audits. Key areas of interest:
 **Production**:
 ```bash
 # .env
-PORT=3000
+SERVER_PORT=52443
 LOG_LEVEL=WARN                      # Minimal logging
 ENABLE_UPLOAD=true
 UPLOAD_PRESERVE_UPLOADS=true        # Persistent storage
@@ -315,11 +315,11 @@ This documentation is part of the Dropgate project. See [LICENSE](../../LICENSE)
 ## Questions?
 
 - **General questions**: See main [README](../../README.md)
-- **Troubleshooting**: See [TROUBLESHOOTING.md](../../TROUBLESHOOTING.md)
-- **Privacy**: See [PRIVACY.md](../../PRIVACY.md)
+- **Troubleshooting**: See [TROUBLESHOOTING.md](../TROUBLESHOOTING.md)
+- **Privacy**: See [PRIVACY.md](../PRIVACY.md)
 - **Security issues**: Report to repository maintainers
 
 ---
 
-**Last Updated**: 2025-02-02
+**Last Updated**: 2026-02-05
 **Dropgate Version**: 3.0.0

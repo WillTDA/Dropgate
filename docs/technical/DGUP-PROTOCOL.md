@@ -4,7 +4,7 @@
 
 Version: 3.0.0
 Protocol Identifier: DGUP
-Last Updated: 2025-02-02
+Last Updated: 2026-02-05
 
 ---
 
@@ -48,7 +48,7 @@ Last Updated: 2025-02-02
 | Feature | Description |
 |---------|-------------|
 | Encryption | AES-GCM-256 (authenticated encryption) |
-| Chunk Size | 5MB default (configurable) |
+| Chunk Size | 5MB default (configurable, minimum 64KB) |
 | Key Storage | URL hash fragment (never transmitted to server) |
 | Max File Size | Configurable (default: 100MB) |
 | Expiration | Time-based and download-count-based |
@@ -207,8 +207,8 @@ sequenceDiagram
     end
 
     Client->>Server: POST /upload/complete
-    Server-->>Client: 200 { fileId }
-    Note over Server: Verify all chunks received<br/>Move from /tmp/ to /uploads/{fileId}<br/>Create DB record with expiresAt
+    Server-->>Client: 200 { id: fileId }
+    Note over Server: Verify all chunks received<br/>Verify file size matches totalSize<br/>Move from /tmp/ to /uploads/{fileId}<br/>Create DB record with expiresAt
 ```
 
 ### Session States
@@ -272,7 +272,7 @@ For each received chunk, the server validates:
 |-------|-----------|----------------|
 | **Session exists** | `ongoingUploads.has(uploadId)` | `410 Gone` |
 | **Chunk index range** | `0 <= chunkIndex < totalChunks` | `400 Bad Request` |
-| **Hash format** | Regex: `/^[a-f0-9]{64}$/i` | `400 Bad Request` |
+| **Hash format** | Regex: `/^[a-f0-9]{64}$/` (lowercase hex) | `400 Bad Request` |
 | **Chunk size** | `buffer.length <= chunkSize + 1024` | `413 Payload Too Large` |
 | **Hash verification** | `SHA256(buffer) === clientHash` | `400 Bad Request` |
 | **Duplicate detection** | `!receivedChunks.has(chunkIndex)` | `200 OK` (skip) |
@@ -395,6 +395,8 @@ const encryptedManifestB64 = await blobToBase64(encryptedManifest);
 - Know file count or individual sizes
 - Correlate files by metadata
 
+> **Implementation detail**: For sealed (encrypted) bundles, individual files are stored independently without a `bundleId` field. Their lifecycle is time-based only, and each file gets unlimited downloads (`maxDownloads: 0`) since the bundle manifest controls discoverability. For unsealed bundles, files are tagged with `bundleId` to enable cascade deletion.
+
 *Source: [server.js:817-906](../../server/server.js#L817-L906)*
 
 ### Unsealed Bundles
@@ -463,10 +465,11 @@ if (7GB > 5GB) {
 **Database type**: SQLite via [Quick.db](https://www.npmjs.com/package/quick.db)
 
 **Storage modes**:
-- **In-memory** (default): `new QuickDB({ filePath: ':memory:' })`
+- **In-memory** (default): `new QuickDB({ driver: new MemoryDriver() })`
   - Data lost on server restart
   - Maximum privacy
-- **Persistent**: `new QuickDB({ filePath: '/uploads/db/file-database.sqlite' })`
+  - Requires the `MemoryDriver` class from the `quick.db` package
+- **Persistent**: `new QuickDB({ filePath: path.join(__dirname, 'uploads', 'db', 'file-database.sqlite') })`
   - Data survives restarts
   - Requires `UPLOAD_PRESERVE_UPLOADS=true`
 
@@ -535,18 +538,20 @@ interface UnsealedBundleRecord {
 flowchart TD
     A[GET /api/file/{fileId}] --> B{File exists in DB?}
     B -->|No| C[404 Not Found]
-    B -->|Yes| D{expiresAt passed?}
-    D -->|Yes| E[Delete file + DB record<br/>Return 404]
-    D -->|No| F{maxDownloads > 0?}
-    F -->|No| G[Stream file to client<br/>No count tracking]
-    F -->|Yes| H{downloadCount >= maxDownloads?}
-    H -->|Yes| I[410 Gone - already consumed]
-    H -->|No| J[Stream file to client]
-    J --> K[Increment downloadCount]
+    B -->|Yes| D{File on disk?}
+    D -->|No| E[404 Not Found]
+    D -->|Yes| F[Stream file to client]
+    F --> G{File belongs to bundle?}
+    G -->|Yes| H[No download count increment<br/>Bundle tracks downloads separately]
+    G -->|No| I{maxDownloads > 0?}
+    I -->|No| J[No count tracking<br/>File persists]
+    I -->|Yes| K[Increment downloadCount]
     K --> L{downloadCount >= maxDownloads?}
     L -->|Yes| M[Delete file + DB record<br/>Update disk usage]
     L -->|No| N[Update downloadCount in DB]
 ```
+
+> **Note**: Expired files are cleaned up by the `cleanupExpiredFiles()` timer (every 60 seconds), not inline during download requests. If a file has expired but the cleanup timer hasn't run yet, the file may still be served. Once cleaned up, subsequent requests return 404.
 
 *Source: [server.js:974-992](../../server/server.js#L974-L992)*
 
@@ -555,21 +560,25 @@ flowchart TD
 After successfully streaming a file to the client:
 
 ```javascript
+// Skip download counting for files that belong to a bundle
+// (bundle download count is tracked separately via /api/bundle/:bundleId/downloaded)
+if (fileRecord.bundleId) return;
+
 const newDownloadCount = (fileRecord.downloadCount || 0) + 1;
 const maxDl = fileRecord.maxDownloads ?? 1;
 
 if (maxDl > 0 && newDownloadCount >= maxDl) {
   // Delete file and database record
+  currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
   fs.rm(fileRecord.path, { force: true });
   fileDatabase.delete(fileId);
-
-  // Update disk usage
-  currentDiskUsage = Math.max(0, currentDiskUsage - fileSize);
 } else {
   // Update download count
   fileDatabase.set(fileId, { ...fileRecord, downloadCount: newDownloadCount });
 }
 ```
+
+> **Bundle files**: Files that belong to a bundle do not track individual download counts. Bundle downloads are tracked separately via the `POST /api/bundle/:bundleId/downloaded` endpoint, which the client calls after downloading all bundle files.
 
 **Use cases**:
 - **One-time downloads**: `maxDownloads = 1` (default)
@@ -581,13 +590,21 @@ if (maxDl > 0 && newDownloadCount >= maxDl) {
 Every 60 seconds, `cleanupExpiredFiles()` runs:
 
 ```javascript
-for (const [fileId, fileRecord] of fileDatabase.entries()) {
-  if (fileRecord.expiresAt && fileRecord.expiresAt < Date.now()) {
-    fs.rm(fileRecord.path, { force: true });
-    fileDatabase.delete(fileId);
+const allFiles = await fileDatabase.all();
+for (const record of allFiles) {
+  if (record.value?.expiresAt && record.value.expiresAt < Date.now()) {
+    // Skip files that belong to a bundle (cleaned up with the bundle)
+    if (record.value.bundleId) continue;
+
+    const stats = fs.statSync(record.value.path);
+    currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+    fs.rmSync(record.value.path, { force: true });
+    await fileDatabase.delete(record.id);
   }
 }
 ```
+
+> **Note**: QuickDB's `.all()` returns an array of `{ id, value }` objects, not a Map iterator.
 
 **Expiration calculation**:
 ```javascript
@@ -600,22 +617,33 @@ const expiresAt = lifetime > 0 ? Date.now() + lifetime : null;
 
 ### Cascade Deletion (Unsealed Bundles)
 
-When an unsealed bundle expires, all member files are deleted:
+When an unsealed bundle expires, all member files are cascade-deleted:
 
 ```javascript
-if (!bundleRecord.sealed && bundleRecord.files) {
-  for (const file of bundleRecord.files) {
-    const fileRecord = fileDatabase.get(file.fileId);
-    if (fileRecord) {
-      fs.rm(fileRecord.path, { force: true });
-      fileDatabase.delete(file.fileId);
+const allBundles = await bundleDatabase.all();
+for (const record of allBundles) {
+  if (record.value?.expiresAt && record.value.expiresAt < now) {
+    if (record.value.sealed) {
+      // Sealed bundle: just delete the manifest record.
+      // Member files are independent and handled by the file cleanup.
+    } else {
+      // Unsealed bundle: delete member files
+      for (const f of (record.value.files || [])) {
+        const fileInfo = await fileDatabase.get(f.fileId);
+        if (fileInfo) {
+          const stats = fs.statSync(fileInfo.path);
+          currentDiskUsage = Math.max(0, currentDiskUsage - stats.size);
+          fs.rmSync(fileInfo.path, { force: true });
+          await fileDatabase.delete(f.fileId);
+        }
+      }
     }
+    await bundleDatabase.delete(record.id);
   }
 }
-bundleDatabase.delete(bundleId);
 ```
 
-**Sealed bundles**: Files expire independently (no cascade).
+**Sealed bundles**: Only the manifest record is deleted. Member files are independent (no `bundleId` field) and expire on their own time-based expiration.
 
 ---
 
@@ -791,15 +819,36 @@ if (receivedHash !== computedHash) {
 
 | Endpoint | Method | Purpose | Request Body | Success Response | Error Responses |
 |----------|--------|---------|--------------|------------------|-----------------|
-| `/api/info` | GET | Server capabilities | - | `200 { version, capabilities: { upload: {...} } }` | - |
+| `/api/info` | GET | Server capabilities | - | `200 { name, version, logLevel, capabilities: { upload: {...}, p2p: {...}, webUI: {...} } }` | - |
 | `/upload/init` | POST | Start single file upload | `{ filename, lifetime, isEncrypted, totalSize, totalChunks, maxDownloads }` | `200 { uploadId }` | `400`, `507`, `413` |
 | `/upload/init-bundle` | POST | Start multi-file bundle | `{ fileCount, files: [...], lifetime, isEncrypted, maxDownloads }` | `200 { bundleUploadId, fileUploadIds: [...] }` | `400`, `507`, `413` |
 | `/upload/chunk` | POST | Upload encrypted chunk | Binary blob (body)<br/>Headers: `X-Upload-ID`, `X-Chunk-Index`, `X-Chunk-Hash` | `200 OK` | `400`, `410`, `413` |
-| `/upload/complete` | POST | Finalize file upload | `{ uploadId }` | `200 { fileId }` | `400`, `410` |
+| `/upload/complete` | POST | Finalize file upload | `{ uploadId }` | `200 { id }` | `400`, `410` |
 | `/upload/complete-bundle` | POST | Finalize bundle | `{ bundleUploadId, encryptedManifest? }` | `200 { bundleId }` | `400`, `410` |
 | `/upload/cancel` | POST | Abort upload | `{ uploadId }` | `200 OK` | `400`, `404` |
 
 ### Request/Response Examples
+
+**GET `/api/info`** (upload capabilities portion):
+```json
+// Response
+{
+  "name": "Dropgate Server",
+  "version": "3.0.0",
+  "logLevel": "INFO",
+  "capabilities": {
+    "upload": {
+      "enabled": true,
+      "maxSizeMB": 100,
+      "bundleSizeMode": "total",
+      "maxLifetimeHours": 24,
+      "maxFileDownloads": 1,
+      "e2ee": true,
+      "chunkSize": 5242880
+    }
+  }
+}
+```
 
 **POST `/upload/init`**:
 ```json
@@ -858,7 +907,7 @@ X-Chunk-Hash: a1b2c3d4e5f6789...
 | `UPLOAD_MAX_STORAGE_GB` | number | `10` | 0-∞ | Total storage quota (GB), 0 = unlimited |
 | `UPLOAD_MAX_FILE_LIFETIME_HOURS` | number | `24` | 0-∞ | Max file lifetime (hours), 0 = unlimited |
 | `UPLOAD_MAX_FILE_DOWNLOADS` | number | `1` | 0-∞ | Max downloads per file, 0 = unlimited |
-| `UPLOAD_CHUNK_SIZE_BYTES` | number | `5242880` | 1024-∞ | Chunk size (bytes), default 5MB |
+| `UPLOAD_CHUNK_SIZE_BYTES` | number | `5242880` | 65536-∞ | Chunk size (bytes), default 5MB, minimum 64KB |
 | `UPLOAD_BUNDLE_SIZE_MODE` | string | `'total'` | `'total'` \| `'per-file'` | Bundle limit mode |
 | `UPLOAD_PRESERVE_UPLOADS` | boolean | `false` | - | Persist uploads across restarts |
 | `UPLOAD_ENABLE_E2EE` | boolean | `true` | - | Enable end-to-end encryption |
@@ -867,30 +916,25 @@ X-Chunk-Hash: a1b2c3d4e5f6789...
 ### Client Configuration Options
 
 ```typescript
-interface UploadFilesOptions {
-  // Server connection
-  baseUrl: string;
+// DropgateClient constructor (server set once)
+const client = new DropgateClient({
+  clientVersion: '3.0.0',
+  server: 'https://dropgate.link',  // URL string or ServerTarget object
+});
 
+// Upload options (passed to client.uploadFiles())
+interface UploadFilesOptions {
   // File options
   files: FileSource[];
   lifetime?: number;           // milliseconds, server may cap
   maxDownloads?: number;       // 0 = unlimited
 
   // Encryption
-  encrypted?: boolean;         // default: true if server supports
-
-  // Upload tuning
-  chunkSize?: number;          // default: from server
-
-  // Retry options
-  retry?: {
-    retries?: number;          // default: 5
-    backoffMs?: number;        // default: 1000
-    maxBackoffMs?: number;     // default: 30000
-  };
+  encrypt?: boolean;           // default: true if server supports E2EE
 
   // Callbacks
   onProgress?: (event: UploadProgressEvent) => void;
+  onSessionCreated?: (session: UploadSession) => void;
 }
 ```
 
