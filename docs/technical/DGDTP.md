@@ -633,11 +633,7 @@ The `sessionId` from the initial `meta` message is stored by the receiver. Subse
 
 ### 18.3 Binary Data State Gating
 
-The receiver only accepts binary data (file chunks) when in the `transferring` state. Binary data received in any other state triggers:
-
-```
-Received binary data before transfer was accepted. Possible malicious sender.
-```
+The receiver only accepts binary data (file chunks) when in the `transferring` state. Binary data received in any other state is rejected.
 
 This prevents pre-transfer data injection attacks.
 
