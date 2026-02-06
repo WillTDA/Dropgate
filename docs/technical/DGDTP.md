@@ -43,7 +43,7 @@ DGDTP supports single-file transfers, multi-file transfers (streamed into a ZIP 
 
 Codes follow the pattern `XXXX-0000`:
 
-- **Letters:** drawn from the alphabet `ABCDEFGHJKLMNPQRSTUVXYZ` (23 characters). The letters `I`, `O`, and `W` are excluded to avoid visual confusion with `1`, `0`, and `VV`.
+- **Letters:** drawn from the alphabet `ABCDEFGHJKLMNPQRSTUVXYZ` (23 characters). The letters `I` and `O` are excluded to avoid visual confusion with `1` and `0`.
 - **Digits:** `0`–`9`.
 
 ### 3.2 Entropy
