@@ -67,7 +67,7 @@ Set `LOG_LEVEL=DEBUG` on the server, reproduce the issue once, then set it back.
   - Try a different network (mobile hotspot is a quick test).
   - Confirm `ENABLE_P2P=true`.
   - Try changing `P2P_STUN_SERVERS` to a different STUN provider.
-  - Some networks/NATs need a **TURN** server to relay traffic (not included by default).
+  - Some networks/NATs need a **TURN** server to relay traffic (currently not supported).
 
 ## 6) Rate limiting
 
