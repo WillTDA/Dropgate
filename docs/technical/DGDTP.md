@@ -93,7 +93,6 @@ The server advertises ICE server configuration via the `/api/info` endpoint:
 
 - **Default STUN server:** `stun:stun.cloudflare.com:3478`.
 - **Custom STUN servers:** configurable via the `P2P_STUN_SERVERS` environment variable (comma- or space-separated list).
-- **TURN servers:** can be configured for environments where direct peer connectivity is not possible (symmetric NATs, restrictive firewalls).
 
 ### 4.3 Signalling Data Visible to the Server
 
@@ -659,7 +658,6 @@ The receiver's watchdog timer resets only on actual binary data, not on `ping`/`
 During WebRTC connection establishment, ICE candidates are exchanged via the signalling server. These candidates contain IP addresses and port numbers of both peers. In environments where IP privacy is critical:
 
 - **Use a VPN** to mask real IP addresses. Select a VPN provider that supports peer-to-peer traffic so that the WebRTC data channel can be established through the VPN tunnel. Research providers carefully, paying attention to their logging policies, jurisdiction, and track record.
-- **Configure TURN servers** as a relay fallback, which can obscure direct peer-to-peer IP exposure (though the TURN server itself will see both peers' addresses).
 - Be aware that STUN servers receive requests from both peers' IP addresses during the ICE gathering phase.
 
 ### 18.8 Code Brute-Force Resistance
@@ -675,7 +673,7 @@ With ~2.8 billion possible codes and active codes existing only for the duration
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENABLE_P2P` | `true` | Enable or disable DGDTP. |
-| `P2P_STUN_SERVERS` | `stun:stun.cloudflare.com:3478` | Comma-separated list of STUN/TURN server URLs. |
+| `P2P_STUN_SERVERS` | `stun:stun.cloudflare.com:3478` | Comma-separated list of STUN server URLs. |
 | `PEERJS_DEBUG` | `false` | Enable PeerJS debug logging. |
 
 ### 19.2 Client Configuration Options
@@ -742,7 +740,7 @@ With ~2.8 billion possible codes and active codes existing only for the duration
 ### 22.1 Server Deployment
 
 - **Deploy the signalling server behind HTTPS.** WebRTC requires a secure context in all modern browsers. The PeerJS server MUST be accessed via HTTPS (or `localhost` for development).
-- **Configure appropriate STUN servers.** The default Cloudflare STUN server is suitable for most deployments. For environments behind restrictive NATs, consider adding TURN server configuration.
+- **Configure appropriate STUN servers.** The default Cloudflare STUN server is suitable for most deployments. For privacy-sensitive applications, consider self-hosting a STUN server or using a VPN to mask IP addresses.
 - **Do not enable `PEERJS_DEBUG` in production.** Debug logging may expose ICE candidates (IP addresses) and connection metadata in server logs.
 - **Monitor connection patterns.** Unusual rates of peer registrations or connection attempts may indicate scanning or abuse.
 
@@ -756,8 +754,8 @@ With ~2.8 billion possible codes and active codes existing only for the duration
 ### 22.3 Network Privacy
 
 - **Use a VPN for sensitive P2P transfers.** ICE candidates expose real IP addresses to the signalling server and (briefly) to the peer. A VPN that supports peer-to-peer traffic masks the sender's and receiver's true network locations. Research VPN providers carefully — audit their logging policies, jurisdiction, and technical architecture before relying on them for privacy-critical transfers.
-- **Be aware of STUN/TURN server visibility.** STUN servers receive ICE binding requests containing the peer's IP address. TURN servers relay all traffic and therefore see both peers' addresses. Self-hosted STUN/TURN servers eliminate third-party visibility.
-- **Consider network topology.** In corporate or institutional environments, WebRTC traffic may be blocked or inspected. TURN relay can help traverse such restrictions, but the relay server becomes a point of observation.
+- **Be aware of STUN server visibility.** STUN servers receive ICE binding requests containing the peer's IP address. Self-hosted STUN servers eliminate third-party visibility.
+- **Consider network topology.** In corporate or institutional environments, WebRTC traffic may be blocked or inspected.
 
 ---
 

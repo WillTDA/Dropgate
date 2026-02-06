@@ -313,13 +313,7 @@ During DGDTP connection establishment, STUN binding requests are sent to the con
 
 **Mitigation:** Self-host a STUN server to eliminate third-party IP exposure. Alternatively, use a VPN to mask real IP addresses before STUN requests are sent.
 
-### 9.2 TURN Servers
-
-If configured, TURN servers relay all WebRTC traffic. They see both peers' IP addresses and the volume of data transferred (but not its content, as it is DTLS-encrypted).
-
-**Mitigation:** Self-host TURN servers for full control over relay infrastructure.
-
-### 9.3 Reverse Proxies
+### 9.2 Reverse Proxies
 
 A TLS-terminating reverse proxy (Nginx, Caddy, etc.) sits between clients and the Dropgate Server. It sees:
 
@@ -342,7 +336,7 @@ A TLS-terminating reverse proxy (Nginx, Caddy, etc.) sits between clients and th
 - **Keep `LOG_LEVEL` at `INFO` or lower in production.** `DEBUG` logging includes chunk-level details that, in aggregate, reveal transfer patterns.
 - **Disable `PEERJS_DEBUG` in production.** PeerJS debug output may include peer IDs and connection metadata.
 - **Audit reverse proxy logs.** The reverse proxy may capture data that Dropgate itself does not log. Apply appropriate retention and access controls.
-- **Review the `P2P_STUN_SERVERS` configuration.** If IP privacy is a concern, self-host STUN/TURN infrastructure rather than relying on third-party servers.
+- **Review the `P2P_STUN_SERVERS` configuration.** If IP privacy is a concern, self-host STUN infrastructure rather than relying on third-party servers.
 
 ### 10.2 Users
 
