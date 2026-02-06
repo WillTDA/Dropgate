@@ -79,6 +79,10 @@ See the [server README](./server/README.md) for configuration, Docker setup, and
 
 See the [client README](./client/README.md) for installation, usage, and build instructions.
 
+### Core Library
+
+See the [core README](./packages/dropgate-core/README.md) for API documentation and usage examples.
+
 
 ## 🔒 Privacy and Security Philosophy
 
