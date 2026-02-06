@@ -136,7 +136,8 @@ Content-Type: application/json
 5. `totalChunks` MUST NOT exceed 100,000.
 6. `totalChunks` MUST be consistent with `totalSize` and the server's chunk size (±1 for rounding).
 7. `lifetime` MUST NOT exceed the server's declared maximum lifetime.
-8. Available storage quota is checked atomically under a mutex.
+8. `maxDownloads` MUST NOT exceed the server's declared maximum download limit.
+9. Available storage quota is checked atomically under a mutex.
 
 **Response (200):**
 
