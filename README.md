@@ -95,7 +95,7 @@ If you self-host, you decide how strict you want to be — from private-only to 
 
 - [`docs/PRIVACY.md`](./docs/PRIVACY.md)
 - [`docs/TROUBLESHOOTING.md`](./docs/TROUBLESHOOTING.md)
-- [`Technical Documentation`](./docs/technical/README.md)
+- [`Technical Documentation`](./docs/technical/)
 
 
 ## 📜 Licenses
