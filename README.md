@@ -71,13 +71,13 @@ git clone https://github.com/WillTDA/Dropgate.git
 cd Dropgate
 ```
 
-### Server
-
-See the [server README](./server/README.md) for configuration, Docker setup, and deployment.
-
 ### Client
 
 See the [client README](./client/README.md) for installation, usage, and build instructions.
+
+### Server
+
+See the [server README](./server/README.md) for configuration, Docker setup, and deployment.
 
 ### Core Library
 
