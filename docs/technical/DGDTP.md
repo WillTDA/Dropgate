@@ -43,14 +43,14 @@ DGDTP supports single-file transfers, multi-file transfers (streamed into a ZIP 
 
 Codes follow the pattern `XXXX-0000`:
 
-- **Letters:** drawn from the alphabet `ABCDEFGHJKLMNPQRSTUVXYZ` (23 characters). The letters `I` and `O` are excluded to avoid visual confusion with `1` and `0`.
+- **Letters:** drawn from the alphabet `ABCDEFGHJKLMNPQRSTUVWXYZ` (24 characters). The letters `I` and `O` are excluded to avoid visual confusion with `1` and `0`.
 - **Digits:** `0`–`9`.
 
 ### 3.2 Entropy
 
-- Letter space: 23⁴ = 279,841 combinations.
+- Letter space: 24⁴ = 331,776 combinations.
 - Digit space: 10⁴ = 10,000 combinations.
-- Total: ~2.8 × 10⁹ combinations.
+- Total: ~3.3 × 10⁹ combinations.
 
 ### 3.3 Generation
 
@@ -662,7 +662,7 @@ During WebRTC connection establishment, ICE candidates are exchanged via the sig
 
 ### 18.8 Code Brute-Force Resistance
 
-With ~2.8 billion possible codes and active codes existing only for the duration of a transfer, brute-force guessing is impractical under the connection rate limit (10 attempts per 10 seconds per sender). However, server operators SHOULD monitor for distributed scanning patterns.
+With ~3.3 billion possible codes and active codes existing only for the duration of a transfer, brute-force guessing is impractical under the connection rate limit (10 attempts per 10 seconds per sender). However, server operators SHOULD monitor for distributed scanning patterns.
 
 ---
 
