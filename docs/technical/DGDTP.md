@@ -735,7 +735,7 @@ With ~3.3 billion possible codes and active codes existing only for the duration
 
 ### 22.1 Server Deployment
 
-- **Deploy the signalling server behind HTTPS.** WebRTC requires a secure context in all modern browsers. The PeerJS server MUST be accessed via HTTPS (or `localhost` for development).
+- **Deploy the Dropgate Server/signalling server behind HTTPS.** WebRTC requires a secure context in all modern browsers. The PeerJS server MUST be accessed via HTTPS (or `localhost` for development).
 - **Configure appropriate STUN servers.** The default Cloudflare STUN server is suitable for most deployments. For privacy-sensitive applications, consider self-hosting a STUN server or using a VPN to mask IP addresses.
 - **Do not enable `PEERJS_DEBUG` in production.** Debug logging may expose ICE candidates (IP addresses) and connection metadata in server logs.
 - **Monitor connection patterns.** Unusual rates of peer registrations or connection attempts may indicate scanning or abuse.
