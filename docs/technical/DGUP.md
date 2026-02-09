@@ -180,8 +180,8 @@ Each file in the bundle receives its own upload ID and is uploaded independently
 ### 5.3 Session Expiry
 
 - **Single-file sessions** expire after **2 minutes** of inactivity.
-- **Bundle sessions** expire after **10 minutes** of inactivity.
-- Each successful chunk upload resets the inactivity timer.
+- **Bundle sessions** expire after **2 minutes** of inactivity.
+- Each successful chunk upload resets the inactivity timer for the upload session, the parent bundle session (if applicable), and all sibling upload sessions within the same bundle.
 
 ---
 
@@ -445,7 +445,7 @@ Rate limits are applied per IP address. When triggered, the server responds with
 | Storage quota | 10 GiB | Server-configurable. |
 | Encrypted manifest size | 1 MiB max | Sealed bundles only. |
 | Upload session timeout | 2 minutes | Per-chunk inactivity. |
-| Bundle session timeout | 10 minutes | Per-bundle inactivity. |
+| Bundle session timeout | 2 minutes | Per-chunk inactivity (same as upload sessions). |
 | IV size | 12 bytes | AES-GCM standard. |
 | Authentication tag size | 16 bytes | AES-GCM standard. |
 | Key size | 256 bits | AES-256. |

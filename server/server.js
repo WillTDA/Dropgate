@@ -689,7 +689,7 @@ if (enableUpload) {
             maxDownloads: effectiveMaxDownloads,
             completedFiles: new Set(),
             completedFileResults: [], // { fileId, name, sizeBytes }
-            expiresAt: Date.now() + (10 * 60 * 1000), // 10 minute deadline for entire bundle
+            expiresAt: Date.now() + (2 * 60 * 1000), // 2 minute inactivity deadline (refreshed on each chunk)
         });
 
         log('debug', `Initialised bundle upload (${fileCount} files). Reserved ${(totalBundleSize / 1000 / 1000).toFixed(2)} MB total.`);
@@ -793,6 +793,7 @@ if (enableUpload) {
                     if (session.bundleUploadId) {
                         const bundleSession = ongoingBundles.get(session.bundleUploadId);
                         if (bundleSession) {
+                            bundleSession.expiresAt = Date.now() + (2 * 60 * 1000);
                             const refreshedAt = Date.now() + (2 * 60 * 1000);
                             for (const siblingId of bundleSession.fileUploadIds) {
                                 const sibling = ongoingUploads.get(siblingId);
@@ -886,7 +887,7 @@ if (enableUpload) {
                     name: uploadInfo.filename,
                     sizeBytes: stats.size,
                 });
-                bundleSession.expiresAt = Date.now() + (10 * 60 * 1000); // Reset bundle deadline
+                bundleSession.expiresAt = Date.now() + (2 * 60 * 1000); // Reset bundle deadline
             }
         }
 
