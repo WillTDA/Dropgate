@@ -1,4 +1,6 @@
 - Add extensive tests for validation, argument handling, etc.
-- Update ALL documentation (including technical) to include mentioning the CLI.
 - Proofread README documentation. Initial drafts are written using Claude 4.6 Opus, so they need to be human-reviewed.
-- Fix indentation issues in TUI
+- Fix indentation issues in interface (you can see this in info, make sure it's not happening in other places too).
+- Get P2P working in the binary, without the need for NPM peerjs. This will likely involve bundling the necessary P2P code directly into the binary.
+- Ensure that the CLI calls "/api/bundle/${bundleId}/downloaded" if downloading a bundle, to trigger the appropriate server-side logic.
+- Update ALL documentation (including technical) to include mentioning the CLI.
