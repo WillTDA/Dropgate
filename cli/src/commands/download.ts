@@ -68,7 +68,7 @@ export async function run(args: string[], flags: ParsedFlags): Promise<void> {
 
   // Create client
   const client = new DropgateClient({
-    clientVersion: process.env.DROPGATE_CLI_VERSION || '3.0.3',
+    clientVersion: process.env.DROPGATE_CLI_VERSION || '3.0.4',
     server: server!,
     fallbackToHttp: true,
   });

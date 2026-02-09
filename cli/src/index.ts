@@ -19,7 +19,7 @@ const commandMap: Record<string, { run: (args: string[], flags: ParsedFlags) => 
   config: configCmd,
 };
 
-const CLI_VERSION = process.env.DROPGATE_CLI_VERSION || '3.0.3';
+const CLI_VERSION = process.env.DROPGATE_CLI_VERSION || '3.0.4';
 
 function printVersion(): void {
   console.log(`dropgate-cli v${CLI_VERSION}`);

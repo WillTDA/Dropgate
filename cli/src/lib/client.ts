@@ -3,7 +3,7 @@ import { readConfig } from './config-store.js';
 import { getFlag, type ParsedFlags } from './parse.js';
 import { exitError } from './errors.js';
 
-const CLI_VERSION = process.env.DROPGATE_CLI_VERSION || '3.0.3';
+const CLI_VERSION = process.env.DROPGATE_CLI_VERSION || '3.0.4';
 
 export function createClient(flags: ParsedFlags): DropgateClient {
   const config = readConfig();
