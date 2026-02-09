@@ -285,7 +285,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
     res.locals.nonce = crypto.randomBytes(16).toString('base64');
     next();
@@ -548,7 +548,7 @@ if (enableUpload) {
         res.status(200).json({ uploadId });
     });
 
-    uploadRouter.post('/init-bundle', limiter, (req, res) => {
+    uploadRouter.post('/init-bundle', limiter, async (req, res) => {
         const bundleUploadId = uuidv4();
         const { fileCount, files, lifetime, isEncrypted, maxDownloads: clientMaxDownloads } = req.body;
 
@@ -649,34 +649,39 @@ if (enableUpload) {
             return res.status(413).json({ error: `Total bundle size exceeds limit of ${maxFileSizeMB} MB.` });
         }
 
-        // Check storage quota for the entire bundle
-        let reservedSpace = 0;
-        ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
-        if ((currentDiskUsage + reservedSpace + totalBundleSize) > MAX_STORAGE_BYTES) {
-            return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
-        }
+        // Check storage quota for the entire bundle (CRITICAL: atomic section to prevent TOCTOU race)
+        const releaseLock = await acquireQuotaLock();
+        try {
+            let reservedSpace = 0;
+            ongoingUploads.forEach(u => reservedSpace += u.reservedBytes || 0);
+            if ((currentDiskUsage + reservedSpace + totalBundleSize) > MAX_STORAGE_BYTES) {
+                return res.status(507).json({ error: 'Server out of capacity. Try again later.' });
+            }
 
-        // Create individual upload sessions for each file
-        // For sealed (encrypted) bundles, individual files get unlimited downloads
-        // since their lifecycle is time-based and the bundle manifest controls discoverability.
-        const perFileMaxDownloads = isEncrypted ? 0 : effectiveMaxDownloads;
+            // Create individual upload sessions for each file
+            // For sealed (encrypted) bundles, individual files get unlimited downloads
+            // since their lifecycle is time-based and the bundle manifest controls discoverability.
+            const perFileMaxDownloads = isEncrypted ? 0 : effectiveMaxDownloads;
 
-        for (const entry of fileEntries) {
-            const tempFilePath = path.join(tmpDir, entry.uploadId);
-            fs.writeFileSync(tempFilePath, '');
-            ongoingUploads.set(entry.uploadId, {
-                filename: entry.filename,
-                isEncrypted,
-                lifetime: Number(lifetime) || 0,
-                maxDownloads: perFileMaxDownloads,
-                tempFilePath,
-                totalSize: entry.totalSize,
-                totalChunks: entry.totalChunks,
-                receivedChunks: new Set(),
-                reservedBytes: entry.totalSize,
-                expiresAt: Date.now() + (2 * 60 * 1000),
-                bundleUploadId, // Link back to the bundle
-            });
+            for (const entry of fileEntries) {
+                const tempFilePath = path.join(tmpDir, entry.uploadId);
+                fs.writeFileSync(tempFilePath, '');
+                ongoingUploads.set(entry.uploadId, {
+                    filename: entry.filename,
+                    isEncrypted,
+                    lifetime: Number(lifetime) || 0,
+                    maxDownloads: perFileMaxDownloads,
+                    tempFilePath,
+                    totalSize: entry.totalSize,
+                    totalChunks: entry.totalChunks,
+                    receivedChunks: new Set(),
+                    reservedBytes: entry.totalSize,
+                    expiresAt: Date.now() + (2 * 60 * 1000),
+                    bundleUploadId, // Link back to the bundle
+                });
+            }
+        } finally {
+            releaseLock();
         }
 
         // Track the bundle session
@@ -740,14 +745,25 @@ if (enableUpload) {
 
         // Note: duplicate chunk check moved to after integrity verification for security
 
+        const maxChunkBytes = uploadChunkSizeBytes + 1024;
         const chunks = [];
-        req.on('data', (chunk) => chunks.push(chunk));
+        let receivedBytes = 0;
+        let aborted = false;
+
+        req.on('data', (chunk) => {
+            receivedBytes += chunk.length;
+            // 1. Verify Size (chunk size + overhead limit)
+            if (receivedBytes > maxChunkBytes) {
+                aborted = true;
+                req.destroy(); // Stop reading immediately to prevent memory exhaustion
+                return res.status(413).send('Chunk too large.');
+            }
+            chunks.push(chunk);
+        });
         req.on('end', () => {
+            if (aborted) return;
             const buffer = Buffer.concat(chunks);
             log('debug', `Received chunk ${chunkIndex + 1}/${session.totalChunks}. Size: ${(buffer.length / 1000).toFixed(2)} KB`);
-
-            // 1. Verify Size (chunk size + overhead limit)
-            if (buffer.length > uploadChunkSizeBytes + 1024) return res.status(413).send('Chunk too large.');
 
             // 2. Verify Integrity
             const serverHash = crypto.createHash('sha256').update(buffer).digest('hex');
