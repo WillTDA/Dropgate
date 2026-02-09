@@ -355,10 +355,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.electronAPI.onBackgroundUploadStart(async (details) => {
             console.log('Background upload triggered with details:', details);
 
-            if (details && details.filePath) {
-                console.log('File size:', details.size, 'bytes');
-                const file = new LazyFile(details.filePath, details.name, details.size);
-                selectedFiles = [file];
+            if (details && details.files && details.files.length > 0) {
+                selectedFiles = details.files.map(f => {
+                    console.log('File:', f.name, 'size:', f.size, 'bytes');
+                    return new LazyFile(f.filePath, f.name, f.size);
+                });
                 // Encryption is auto-determined by server capabilities later
 
                 const settings = await window.electronAPI.getSettings();
@@ -375,7 +376,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serverUrlInput.value = settings.serverURL;
                 createClient(settings.serverURL);
 
-                console.log('Starting upload...');
+                console.log('Starting upload of', selectedFiles.length, 'file(s)...');
                 // Trigger the centralised upload function
                 await performUpload();
             } else {
