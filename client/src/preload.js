@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancelUpload: () => ipcRenderer.send('cancel-upload'),
     onCancelUpload: (callback) => ipcRenderer.on('cancel-upload-trigger', (_event) => callback()),
     rendererReady: () => ipcRenderer.send('renderer-ready'),
+    readFileRange: (filePath, start, end) => ipcRenderer.invoke('read-file-range', filePath, start, end),
+    revokeFileAccess: (filePath) => ipcRenderer.send('revoke-file-access', filePath),
     openExternal: (url) => ipcRenderer.send('open-external', url),
     showWindow: () => ipcRenderer.send('show-window')
 });

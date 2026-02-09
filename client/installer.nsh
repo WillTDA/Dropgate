@@ -1,6 +1,7 @@
 !macro customInstall
   ; Write the registry keys for the context menu
   WriteRegStr HKCR "*\shell\Dropgate" "" "Share with Dropgate"
+  WriteRegStr HKCR "*\shell\Dropgate" "Icon" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}"'
   WriteRegStr HKCR "*\shell\Dropgate\command" "" '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "%1" --upload'
 !macroend
 

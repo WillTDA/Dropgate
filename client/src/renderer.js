@@ -1,5 +1,49 @@
 import { DropgateClient, lifetimeToMs } from './dropgate-core.js';
 
+/**
+ * A Blob-like object that reads a byte range from a file on disk via IPC,
+ * only when the data is actually needed (i.e. when arrayBuffer() is called).
+ */
+class LazyBlob {
+    constructor(filePath, start, end) {
+        this.filePath = filePath;
+        this.start = start;
+        this.end = end;
+        this.size = end - start;
+    }
+
+    async arrayBuffer() {
+        const buffer = await window.electronAPI.readFileRange(this.filePath, this.start, this.end);
+        // IPC returns a Node.js Buffer (Uint8Array); convert to ArrayBuffer
+        if (buffer instanceof ArrayBuffer) return buffer;
+        return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    }
+
+    slice(start, end) {
+        const s = this.start + (start || 0);
+        const e = this.start + (end !== undefined ? end : this.size);
+        return new LazyBlob(this.filePath, s, e);
+    }
+}
+
+/**
+ * A File-like object backed by a file path on disk.
+ * Implements the subset of the File/Blob API that dropgate-core needs:
+ * .name, .size, .type, .slice(start, end)
+ */
+class LazyFile {
+    constructor(filePath, name, size) {
+        this.filePath = filePath;
+        this.name = name;
+        this.size = size;
+        this.type = '';
+    }
+
+    slice(start, end) {
+        return new LazyBlob(this.filePath, start || 0, end !== undefined ? end : this.size);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     try {
         const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
@@ -259,6 +303,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         }
                         uploadBtn.disabled = true;
                         uploadBtn.textContent = 'Uploading...';
+                        uploadBtn.style.display = 'none';
+                        cancelUploadBtn.style.display = 'block';
+                        cancelUploadBtn.onclick = () => window.electronAPI.cancelUpload();
                         linkSection.style.display = 'none';
                         break;
                     }
@@ -269,6 +316,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         linkSection.style.display = 'block';
                         uploadStatus.textContent = 'Upload successful!';
                         uploadStatus.className = 'form-text mt-1 text-success';
+                        uploadBtn.style.display = 'block';
+                        cancelUploadBtn.style.display = 'none';
                         resetUI();
                         break;
                     }
@@ -277,17 +326,28 @@ document.addEventListener('DOMContentLoaded', async () => {
                         const { error } = event.data;
                         uploadStatus.textContent = `Upload failed: ${error}`;
                         uploadStatus.className = 'form-text mt-1 text-danger';
+                        uploadBtn.style.display = 'block';
+                        cancelUploadBtn.style.display = 'none';
                         resetUI(false);
                         break;
                     }
             }
         });
 
+        // Handles cancel requests forwarded from the main process (e.g. user
+        // clicked cancel in the main window while a background upload is running)
+        window.electronAPI.onCancelUpload(() => {
+            if (activeUploadSession) {
+                activeUploadSession.cancel('Upload cancelled.');
+                activeUploadSession = null;
+            }
+        });
+
         // Listens for a file opened via the 'Open File' menu
         window.electronAPI.onFileOpened((file) => {
-            if (file && file.data) {
-                const newFile = new File([file.data], file.name, { type: '' });
-                handleFiles([newFile]);
+            if (file && file.filePath) {
+                const lazyFile = new LazyFile(file.filePath, file.name, file.size);
+                handleFiles([lazyFile]);
             }
         });
 
@@ -295,10 +355,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.electronAPI.onBackgroundUploadStart(async (details) => {
             console.log('Background upload triggered with details:', details);
 
-            if (details && details.data) {
-                console.log('File size:', details.data.byteLength, 'bytes');
-                const file = new File([details.data], details.name);
-                selectedFiles = [file];
+            if (details && details.files && details.files.length > 0) {
+                selectedFiles = details.files.map(f => {
+                    console.log('File:', f.name, 'size:', f.size, 'bytes');
+                    return new LazyFile(f.filePath, f.name, f.size);
+                });
                 // Encryption is auto-determined by server capabilities later
 
                 const settings = await window.electronAPI.getSettings();
@@ -315,7 +376,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 serverUrlInput.value = settings.serverURL;
                 createClient(settings.serverURL);
 
-                console.log('Starting upload...');
+                console.log('Starting upload of', selectedFiles.length, 'file(s)...');
                 // Trigger the centralised upload function
                 await performUpload();
             } else {
@@ -451,6 +512,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             const lifetimeMs = getLifetimeInMs();
             saveSettings();
 
+            // Revoke main-process file access for any LazyFile instances after upload ends
+            const revokeAllLazyFiles = () => {
+                for (const f of selectedFiles) {
+                    if (f instanceof LazyFile) {
+                        window.electronAPI.revokeFileAccess(f.filePath);
+                    }
+                }
+            };
+
             try {
                 const session = await coreClient.uploadFiles({
                     files: selectedFiles.length === 1 ? selectedFiles[0] : selectedFiles,
@@ -503,6 +573,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 cancelUploadBtn.style.display = 'none';
                 activeUploadSession = null;
 
+                revokeAllLazyFiles();
                 window.electronAPI.uploadFinished({ status: 'success', link: result.downloadUrl });
             } catch (error) {
                 // Swap buttons back on error
@@ -510,6 +581,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 cancelUploadBtn.style.display = 'none';
                 activeUploadSession = null;
 
+                revokeAllLazyFiles();
                 window.electronAPI.uploadFinished({
                     status: 'error',
                     error: error?.message || String(error)

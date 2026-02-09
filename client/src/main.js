@@ -38,13 +38,24 @@ let uploadQueue = [];
 let isUploading = false;
 let activeUploadNotification = null;
 
+// Tracks file paths the renderer is allowed to read ranges from (defense-in-depth for context isolation)
+const authorizedFilePaths = new Set();
+
+// Batch collection for multi-file context menu selections.
+// Windows launches one process per selected file; we debounce them into a single bundle.
+let batchFiles = [];
+let batchTimer = null;
+const BATCH_DEBOUNCE_MS = 500;
+
 function showNotification(title, body) {
     const notification = new Notification({ title, body });
     notification.on('click', () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-            mainWindow.focus();
+        if (!mainWindow || mainWindow.isDestroyed()) {
+            createWindow();
         }
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
     });
     notification.show();
     return notification;
@@ -301,9 +312,9 @@ function processUploadQueue() {
     }
 
     isUploading = true;
-    const { filePath } = uploadQueue.shift();
-    log('Processing upload from queue:', filePath);
-    triggerBackgroundUpload(filePath);
+    const { filePaths } = uploadQueue.shift();
+    log('Processing upload from queue:', filePaths.length, 'file(s)');
+    triggerBackgroundUpload(filePaths);
 }
 
 function handleArgs(argv) {
@@ -360,16 +371,30 @@ function handleArgs(argv) {
     log('Is upload action:', isUploadAction);
 
     if (isUploadAction) {
-        // Check if this file is already in the queue to prevent duplicates
-        const alreadyQueued = uploadQueue.some(item => item.filePath === filePath);
-        if (alreadyQueued) {
-            log('File already in queue, skipping duplicate');
+        // Check if this file is already pending or queued to prevent duplicates
+        const alreadyBatched = batchFiles.includes(filePath);
+        const alreadyQueued = uploadQueue.some(item => item.filePaths.includes(filePath));
+        if (alreadyBatched || alreadyQueued) {
+            log('File already batched/queued, skipping duplicate');
             return;
         }
 
-        uploadQueue.push({ filePath });
-        log('Added to queue. New queue length:', uploadQueue.length);
-        processUploadQueue();
+        // Collect files and debounce — Windows launches one process per selected
+        // file, so multi-select arrivals are spaced milliseconds apart.
+        batchFiles.push(filePath);
+        log('Added to batch. Batch size:', batchFiles.length);
+
+        if (batchTimer) clearTimeout(batchTimer);
+        batchTimer = setTimeout(() => {
+            if (batchFiles.length > 0) {
+                const filePaths = [...batchFiles];
+                batchFiles = [];
+                batchTimer = null;
+                log('Batch timer fired, queuing', filePaths.length, 'file(s)');
+                uploadQueue.push({ filePaths });
+                processUploadQueue();
+            }
+        }, BATCH_DEBOUNCE_MS);
     } else {
         log('Not an upload action, ignoring');
     }
@@ -484,10 +509,12 @@ ipcMain.on('cancel-upload', (event) => {
         activeUploadNotification = null;
     }
 
-    // Forward cancellation trigger to the renderer that requested it
-    const uploaderWindow = BrowserWindow.fromWebContents(event.sender);
-    if (uploaderWindow && !uploaderWindow.isDestroyed()) {
-        uploaderWindow.webContents.send('cancel-upload-trigger');
+    // Broadcast cancellation to all windows — the upload may be running in a
+    // background window while the user clicks cancel in the main window.
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+            win.webContents.send('cancel-upload-trigger');
+        }
     }
 });
 
@@ -525,6 +552,28 @@ ipcMain.on('open-external', (event, url) => {
     if (allowed.some(prefix => url.startsWith(prefix))) {
         shell.openExternal(url);
     }
+});
+
+// Lazy file reading: renderer requests byte ranges instead of loading entire files into memory
+ipcMain.handle('read-file-range', async (event, filePath, start, end) => {
+    if (!authorizedFilePaths.has(filePath)) {
+        throw new Error('File access not authorized.');
+    }
+
+    const fd = fs.openSync(filePath, 'r');
+    try {
+        const length = end - start;
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = fs.readSync(fd, buffer, 0, length, start);
+        // Return only the bytes actually read (handles EOF)
+        return bytesRead < length ? buffer.subarray(0, bytesRead) : buffer;
+    } finally {
+        fs.closeSync(fd);
+    }
+});
+
+ipcMain.on('revoke-file-access', (event, filePath) => {
+    authorizedFilePaths.delete(filePath);
 });
 
 ipcMain.on('show-window', (event) => {
@@ -614,10 +663,12 @@ async function handleOpenDialog() {
 
     const filePath = filePaths[0];
     try {
-        const fileData = fs.readFileSync(filePath);
+        const stats = fs.statSync(filePath);
+        authorizedFilePaths.add(filePath);
         focusedWindow.webContents.send('file-opened', {
             name: path.basename(filePath),
-            data: fileData
+            size: stats.size,
+            filePath: filePath
         });
     } catch (error) {
         console.error('Failed to read the selected file:', error);
@@ -645,21 +696,24 @@ ipcMain.on('renderer-ready', (event) => {
 
     // Check if we have a pending upload for this window
     if (pendingBackgroundUploads.has(windowId)) {
-        const { filePath } = pendingBackgroundUploads.get(windowId);
-        log('Found pending upload for this window:', filePath);
+        const { filePaths } = pendingBackgroundUploads.get(windowId);
+        log('Found pending upload for this window:', filePaths.length, 'file(s)');
 
         try {
-            const fileData = fs.readFileSync(filePath);
-            const fileName = path.basename(filePath);
-
-            log('Sending background-upload-start with file:', fileName, 'size:', fileData.length);
-
-            activeUploadNotification = showNotification('Upload Started', `Uploading ${fileName}...`);
-
-            senderWindow.webContents.send('background-upload-start', {
-                name: fileName,
-                data: fileData
+            const files = filePaths.map(fp => {
+                const stats = fs.statSync(fp);
+                authorizedFilePaths.add(fp);
+                return { name: path.basename(fp), size: stats.size, filePath: fp };
             });
+
+            log('Sending background-upload-start with', files.length, 'file(s)');
+
+            const notifBody = files.length === 1
+                ? `Uploading ${files[0].name}...`
+                : `Uploading ${files.length} files...`;
+            activeUploadNotification = showNotification('Upload Started', notifBody);
+
+            senderWindow.webContents.send('background-upload-start', { files });
 
             // Clear this pending upload
             pendingBackgroundUploads.delete(windowId);
@@ -680,14 +734,19 @@ ipcMain.on('renderer-ready', (event) => {
     }
 });
 
-function triggerBackgroundUpload(filePath) {
+function triggerBackgroundUpload(filePaths) {
     log('=== triggerBackgroundUpload called ===');
-    log('File:', filePath);
-    log('File exists:', fs.existsSync(filePath));
+    log('Files:', filePaths.length);
 
-    if (!fs.existsSync(filePath)) {
-        console.error('File does not exist!');
-        showNotification('Upload Failed', 'File not found.');
+    // Filter out any files that no longer exist
+    const validPaths = filePaths.filter(fp => {
+        const exists = fs.existsSync(fp);
+        if (!exists) log('File no longer exists, skipping:', fp);
+        return exists;
+    });
+
+    if (validPaths.length === 0) {
+        showNotification('Upload Failed', 'File(s) not found.');
         isUploading = false;
         processUploadQueue();
         return;
@@ -712,7 +771,7 @@ function triggerBackgroundUpload(filePath) {
     log('Created background window with ID:', windowId);
 
     // Store the pending upload BEFORE loading the file
-    pendingBackgroundUploads.set(windowId, { filePath });
+    pendingBackgroundUploads.set(windowId, { filePaths: validPaths });
 
     // Clean up if window is closed before upload starts
     backgroundWindow.on('closed', () => {
@@ -726,7 +785,10 @@ function triggerBackgroundUpload(filePath) {
 
     // backgroundWindow.webContents.openDevTools();
 
-    activeUploadNotification = showNotification('Initialising Upload', `Preparing ${path.basename(filePath)}...`);
+    const notifBody = validPaths.length === 1
+        ? `Preparing ${path.basename(validPaths[0])}...`
+        : `Preparing ${validPaths.length} files...`;
+    activeUploadNotification = showNotification('Initialising Upload', notifBody);
 
     log('Loading index.html into background window');
     backgroundWindow.loadFile(path.join(__dirname, 'index.html'));
