@@ -38,13 +38,18 @@ let uploadQueue = [];
 let isUploading = false;
 let activeUploadNotification = null;
 
+// Tracks file paths the renderer is allowed to read ranges from (defense-in-depth for context isolation)
+const authorizedFilePaths = new Set();
+
 function showNotification(title, body) {
     const notification = new Notification({ title, body });
     notification.on('click', () => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.show();
-            mainWindow.focus();
+        if (!mainWindow || mainWindow.isDestroyed()) {
+            createWindow();
         }
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
     });
     notification.show();
     return notification;
@@ -484,10 +489,12 @@ ipcMain.on('cancel-upload', (event) => {
         activeUploadNotification = null;
     }
 
-    // Forward cancellation trigger to the renderer that requested it
-    const uploaderWindow = BrowserWindow.fromWebContents(event.sender);
-    if (uploaderWindow && !uploaderWindow.isDestroyed()) {
-        uploaderWindow.webContents.send('cancel-upload-trigger');
+    // Broadcast cancellation to all windows — the upload may be running in a
+    // background window while the user clicks cancel in the main window.
+    for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) {
+            win.webContents.send('cancel-upload-trigger');
+        }
     }
 });
 
@@ -525,6 +532,28 @@ ipcMain.on('open-external', (event, url) => {
     if (allowed.some(prefix => url.startsWith(prefix))) {
         shell.openExternal(url);
     }
+});
+
+// Lazy file reading: renderer requests byte ranges instead of loading entire files into memory
+ipcMain.handle('read-file-range', async (event, filePath, start, end) => {
+    if (!authorizedFilePaths.has(filePath)) {
+        throw new Error('File access not authorized.');
+    }
+
+    const fd = fs.openSync(filePath, 'r');
+    try {
+        const length = end - start;
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = fs.readSync(fd, buffer, 0, length, start);
+        // Return only the bytes actually read (handles EOF)
+        return bytesRead < length ? buffer.subarray(0, bytesRead) : buffer;
+    } finally {
+        fs.closeSync(fd);
+    }
+});
+
+ipcMain.on('revoke-file-access', (event, filePath) => {
+    authorizedFilePaths.delete(filePath);
 });
 
 ipcMain.on('show-window', (event) => {
@@ -614,10 +643,12 @@ async function handleOpenDialog() {
 
     const filePath = filePaths[0];
     try {
-        const fileData = fs.readFileSync(filePath);
+        const stats = fs.statSync(filePath);
+        authorizedFilePaths.add(filePath);
         focusedWindow.webContents.send('file-opened', {
             name: path.basename(filePath),
-            data: fileData
+            size: stats.size,
+            filePath: filePath
         });
     } catch (error) {
         console.error('Failed to read the selected file:', error);
@@ -649,16 +680,18 @@ ipcMain.on('renderer-ready', (event) => {
         log('Found pending upload for this window:', filePath);
 
         try {
-            const fileData = fs.readFileSync(filePath);
+            const stats = fs.statSync(filePath);
             const fileName = path.basename(filePath);
 
-            log('Sending background-upload-start with file:', fileName, 'size:', fileData.length);
+            log('Sending background-upload-start with file:', fileName, 'size:', stats.size);
 
+            authorizedFilePaths.add(filePath);
             activeUploadNotification = showNotification('Upload Started', `Uploading ${fileName}...`);
 
             senderWindow.webContents.send('background-upload-start', {
                 name: fileName,
-                data: fileData
+                size: stats.size,
+                filePath: filePath
             });
 
             // Clear this pending upload
