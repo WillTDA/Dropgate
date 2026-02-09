@@ -10,7 +10,7 @@ const shared = {
   noExternal: [/@dropgate\/core/, /fflate/],
   external: ['peerjs'],
   define: {
-    'process.env.DROPGATE_CLI_VERSION': '"3.0.2"',
+    'process.env.DROPGATE_CLI_VERSION': '"3.0.3"',
   },
 };
 

@@ -1,6 +1,6 @@
 {
   "name": "dropgate-cli",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "Command-line interface for Dropgate file sharing.",
   "type": "module",
   "bin": {
