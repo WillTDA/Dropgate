@@ -170,6 +170,15 @@ Example response:
 ```
 
 
+## 🖥️ Clients
+
+The Dropgate Server works with multiple clients:
+
+* **[Dropgate Client](../client/README.md)** — Desktop app (Electron) for uploading, encrypting, and sharing files via a GUI.
+* **[Dropgate CLI](../cli/README.md)** — Command-line interface for uploading, downloading, and P2P transfers from the terminal.
+* **Web UI** — Built-in browser interface served by the server itself (when `ENABLE_WEB_UI=true`).
+
+
 ## 🔒 HTTPS / Reverse Proxy Setup
 
 For **E2EE** and **Direct Transfer (P2P)** in browsers, you generally want HTTPS (localhost is the common exception).
@@ -185,7 +194,7 @@ Run the server behind a reverse proxy that terminates TLS:
 
 - Uploaded files live in `server/uploads`.
 - Files can be configured to expire automatically.
-- Files are be removed after the first successful download.
+- Files are removed after the first successful download (by default).
 - Incomplete uploads are cleaned up on an interval.
 
 

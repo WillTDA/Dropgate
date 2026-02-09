@@ -241,6 +241,16 @@ async function downloadBundle(
 
   progress.finish();
 
+  // Notify server that the bundle was downloaded (best effort)
+  try {
+    await fetch(`${compat.baseUrl}/api/bundle/${bundleId}/downloaded`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* Best effort — don't fail the download if this fails */ }
+
   if (json) {
     console.log(JSON.stringify({
       savedTo: outputDir,

@@ -29,6 +29,8 @@
 
 This package is **headless** and **environment-agnostic** — it contains no DOM manipulation, no browser-specific APIs, and no Node.js-specific code. All environment-specific concerns (loading PeerJS, handling file streams, etc.) are handled by the consumer.
 
+It powers the [Dropgate Client](../../client/README.md) (Electron), the [Dropgate CLI](../../cli/README.md), and the server's built-in Web UI.
+
 ## Installation
 
 ```bash

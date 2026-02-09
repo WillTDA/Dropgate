@@ -12,6 +12,8 @@ The Dropgate Upload Protocol (DGUP) defines the client–server mechanism for tr
 
 DGUP is transport-agnostic in principle but is presently implemented over HTTPS. All payloads are JSON unless otherwise stated.
 
+DGUP is consumed by the Dropgate Client (Electron), the Dropgate CLI (`dropgate upload` / `dropgate download`), the Web UI, and any custom consumer built on `@dropgate/core`.
+
 ### 1.1 Design Goals
 
 - **Integrity** — every chunk is verified against a SHA-256 digest before it is persisted.

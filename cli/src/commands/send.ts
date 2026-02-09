@@ -45,16 +45,14 @@ export async function run(args: string[], flags: ParsedFlags): Promise<void> {
 
   const fileSources: NodeFileSource[] = resolvedPaths.map(fp => new NodeFileSource(fp));
 
-  // Load PeerJS
+  // Load PeerJS (bundled into the CLI build)
   let Peer: any;
   try {
     const peerModule = await import('peerjs');
     Peer = peerModule.Peer ?? peerModule.default?.Peer ?? peerModule.default;
   } catch {
     exitError(
-      'PeerJS is not available. P2P transfers require the peerjs package with WebRTC support.\n' +
-      '  Install with: npm install peerjs\n' +
-      '  Note: P2P is not available in standalone binary builds.',
+      'PeerJS failed to load. P2P transfers require WebRTC support in the runtime environment.',
     );
   }
 

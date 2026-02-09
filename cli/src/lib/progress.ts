@@ -160,6 +160,16 @@ export class ProgressRenderer {
       process.stdout.write(lines[i] + (i < lines.length - 1 ? '\n' : '\r'));
     }
 
+    // Clear orphaned lines from previous render (e.g., filename label disappears on final event)
+    const orphaned = this.renderedLines - lines.length;
+    if (orphaned > 0) {
+      for (let i = 0; i < orphaned; i++) {
+        process.stdout.write('\n');
+        clearLine();
+      }
+      cursorUp(orphaned);
+    }
+
     this.renderedLines = lines.length;
   }
 

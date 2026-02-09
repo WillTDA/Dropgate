@@ -74,7 +74,7 @@ To install Dropgate Client:
 ## 🌐 Direct Transfer (P2P)
 
 The desktop client focuses on the classic hosted-upload flow.
-If your server has **Direct Transfer (P2P)** enabled, you can use it from the server’s **Web UI** in your browser.
+If your server has **Direct Transfer (P2P)** enabled, you can use it from the server's **Web UI** in your browser, or from the **[Dropgate CLI](../cli/README.md)** via `dropgate send` and `dropgate receive`.
 
 
 ## 🛠️ Development

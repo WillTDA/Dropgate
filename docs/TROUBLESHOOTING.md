@@ -1,6 +1,6 @@
 # 🛠️ Troubleshooting
 
-This page covers the most common things that can go wrong when running or using Dropgate.
+This page covers the most common things that can go wrong when running or using Dropgate (Server, Client, CLI, or Web UI).
 If you get stuck, turning on debug logs for a minute usually makes the cause obvious.
 
 ---
@@ -75,7 +75,29 @@ If clients see “Too many requests”:
 - Increase `RATE_LIMIT_MAX_REQUESTS` or `RATE_LIMIT_WINDOW_MS`.
 - Or disable rate limiting by setting both to `0`.
 
-## 7) Still stuck?
+## 7) CLI issues
+
+**"No server configured"**
+- Set a default server: `dropgate config set server https://myserver.com`
+- Or pass `--server <url>` on every command.
+
+**Downloads or uploads fail immediately**
+- Check your server is reachable: `dropgate info` (or `dropgate info --server https://myserver.com`).
+- If behind a reverse proxy, ensure the proxy allows large request bodies (see section 3).
+
+**P2P send/receive hangs on "Connecting"**
+- The same causes as section 5 apply. The CLI uses PeerJS and WebRTC internally.
+- If you're running the standalone binary, ensure your runtime has WebRTC support.
+
+**"PeerJS failed to load"**
+- P2P requires WebRTC support in the runtime environment. The standalone binary bundles PeerJS, but some minimal or headless Node.js environments may lack native WebRTC.
+
+**Config path**
+- Run `dropgate config path` to see where your CLI configuration file is stored.
+- Run `dropgate config list` to see current settings.
+- Run `dropgate config reset` to restore defaults.
+
+## 8) Still stuck?
 
 When asking for help, include:
 - Your `GET /api/info` output

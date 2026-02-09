@@ -45,22 +45,22 @@ export async function run(_args: string[], flags: ParsedFlags): Promise<void> {
   if (caps.upload) {
     printKeyValue('Uploads', caps.upload.enabled ? green('Enabled') : red('Disabled'));
     if (caps.upload.enabled) {
-      printKeyValue('  Max size', caps.upload.maxSizeMB ? `${caps.upload.maxSizeMB} MB` : dim('Unlimited'), 0);
+      printKeyValue('Max size', caps.upload.maxSizeMB ? `${caps.upload.maxSizeMB} MB` : dim('Unlimited'), 4);
       printKeyValue(
-        '  Max lifetime',
+        'Max lifetime',
         caps.upload.maxLifetimeHours
           ? `${caps.upload.maxLifetimeHours} hours${caps.upload.maxLifetimeHours >= 24 ? ` (${caps.upload.maxLifetimeHours / 24} days)` : ''}`
           : dim('Unlimited'),
-        0,
+        4,
       );
       printKeyValue(
-        '  Max downloads',
+        'Max downloads',
         caps.upload.maxFileDownloads ? String(caps.upload.maxFileDownloads) : dim('Unlimited'),
-        0,
+        4,
       );
-      printKeyValue('  E2EE', caps.upload.e2ee ? green('Supported') : yellow('Not available'), 0);
+      printKeyValue('E2EE', caps.upload.e2ee ? green('Supported') : yellow('Not available'), 4);
       if (caps.upload.chunkSize) {
-        printKeyValue('  Chunk size', formatBytes(caps.upload.chunkSize), 0);
+        printKeyValue('Chunk size', formatBytes(caps.upload.chunkSize), 4);
       }
     }
   }

@@ -11,6 +11,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "pkg": "npm run build && pkg dist/index.cjs -o dropgate --compress GZip",
     "pkg:win": "npm run build && pkg dist/index.cjs -t node20-win-x64 -o dropgate --compress GZip",
     "pkg:mac": "npm run build && pkg dist/index.cjs -t node20-macos-x64,node20-macos-arm64 -o dropgate --compress GZip",
@@ -28,7 +30,8 @@
     "@types/node": "^22.0.0",
     "@yao-pkg/pkg": "^6.0.0",
     "tsup": "^8.5.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
   },
   "author": "Diamond Digital Development <https://diamonddigital.dev>",
   "license": "GPL-3.0-only",
