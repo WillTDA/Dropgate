@@ -1,0 +1,3 @@
+- Add extensive tests for validation, argument handling, etc.
+- Update ALL documentation (including technical) to include mentioning the CLI.
+- Proofread README documentation. Initial drafts are written using Claude 4.6 Opus, so they need to be human-reviewed.
