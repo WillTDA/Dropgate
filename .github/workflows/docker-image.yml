@@ -4,6 +4,8 @@ on:
 jobs:
   publish_image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
