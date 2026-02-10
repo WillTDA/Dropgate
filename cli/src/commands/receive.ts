@@ -22,6 +22,7 @@ import {
   showCursor,
 } from '../lib/output.js';
 import { exitUsage, exitError } from '../lib/errors.js';
+import { ensureWebRTC, patchPeerJS } from '../lib/webrtc-polyfill.js';
 
 async function promptYesNo(question: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -45,15 +46,21 @@ export async function run(args: string[], flags: ParsedFlags): Promise<void> {
     exitUsage(`Invalid share code format: "${code}". Expected format: ABCD-1234.`);
   }
 
+  // Ensure WebRTC APIs are available (polyfill for Node.js environments)
+  try {
+    await ensureWebRTC();
+  } catch (err: any) {
+    exitError(err.message);
+  }
+
   // Load PeerJS (bundled into the CLI build)
   let Peer: any;
   try {
     const peerModule = await import('peerjs');
+    patchPeerJS(peerModule);
     Peer = peerModule.Peer ?? peerModule.default?.Peer ?? peerModule.default;
   } catch {
-    exitError(
-      'PeerJS failed to load. P2P transfers require WebRTC support in the runtime environment.',
-    );
+    exitError('PeerJS failed to load.');
   }
 
   const outputDir = path.resolve(getFlag(flags, 'o', 'output') ?? '.');

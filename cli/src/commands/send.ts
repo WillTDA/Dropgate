@@ -18,6 +18,7 @@ import {
   isQuiet,
 } from '../lib/output.js';
 import { exitUsage, exitError } from '../lib/errors.js';
+import { ensureWebRTC, patchPeerJS } from '../lib/webrtc-polyfill.js';
 
 export async function run(args: string[], flags: ParsedFlags): Promise<void> {
   const filePaths = getFlagArray(flags, 'i', 'input');
@@ -45,15 +46,21 @@ export async function run(args: string[], flags: ParsedFlags): Promise<void> {
 
   const fileSources: NodeFileSource[] = resolvedPaths.map(fp => new NodeFileSource(fp));
 
+  // Ensure WebRTC APIs are available (polyfill for Node.js environments)
+  try {
+    await ensureWebRTC();
+  } catch (err: any) {
+    exitError(err.message);
+  }
+
   // Load PeerJS (bundled into the CLI build)
   let Peer: any;
   try {
     const peerModule = await import('peerjs');
+    patchPeerJS(peerModule);
     Peer = peerModule.Peer ?? peerModule.default?.Peer ?? peerModule.default;
   } catch {
-    exitError(
-      'PeerJS failed to load. P2P transfers require WebRTC support in the runtime environment.',
-    );
+    exitError('PeerJS failed to load.');
   }
 
   const client = createClient(flags);

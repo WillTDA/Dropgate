@@ -26,6 +26,18 @@
     "@dropgate/core": "file:../packages/dropgate-core",
     "peerjs": "^1.5.5"
   },
+  "optionalDependencies": {
+    "node-datachannel": "^0.29.0"
+  },
+  "pkg": {
+    "scripts": [
+      "node_modules/node-datachannel/dist/cjs/**/*.cjs"
+    ],
+    "assets": [
+      "node_modules/node-datachannel/package.json",
+      "node_modules/node-datachannel/build/**/*.node"
+    ]
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@yao-pkg/pkg": "^6.0.0",
