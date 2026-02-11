@@ -129,7 +129,16 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-const coreClient = new DropgateClient({ clientVersion: '3.0.4', server: location.origin });
+const coreClient = new DropgateClient({ clientVersion: '3.0.5', server: location.origin });
+
+function isFile(file) {
+  return new Promise((resolve) => {
+    if (file.type !== '') return resolve(true);
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(!reader.error);
+    reader.readAsArrayBuffer(file);
+  });
+}
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes)) return '0 bytes';
@@ -287,8 +296,18 @@ function handleFileSelection(files) {
   if (!files || files.length === 0) {
     state.files = [];
   } else {
+    const incoming = Array.from(files);
+
+    // Filter out empty (0-byte) files
+    const valid = incoming.filter(f => f.size > 0);
+    const skipped = incoming.length - valid.length;
+    if (skipped > 0) {
+      showToast(`Skipped ${skipped} empty (0 byte) file${skipped > 1 ? 's' : ''}.`, 'warning');
+    }
+    if (valid.length === 0) return;
+
     // Append new files to existing selection
-    state.files = [...state.files, ...Array.from(files)];
+    state.files = [...state.files, ...valid];
   }
   updateFileUI();
 
@@ -1048,10 +1067,22 @@ function wireUI() {
       els.dropzone.classList.remove('dragover');
     });
   });
-  els.dropzone?.addEventListener('drop', (e) => {
+  els.dropzone?.addEventListener('drop', async (e) => {
     const fileList = e.dataTransfer?.files;
     if (!fileList || !fileList.length) return;
-    handleFileSelection(fileList);
+
+    // Filter out directories
+    const validFiles = [];
+    for (const f of Array.from(fileList)) {
+      if (await isFile(f)) validFiles.push(f);
+    }
+
+    if (validFiles.length === 0) {
+      showToast('Folders cannot be uploaded.', 'warning');
+      return;
+    }
+
+    handleFileSelection(validFiles);
   });
 
   // Mode toggles
