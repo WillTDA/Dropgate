@@ -10,7 +10,7 @@ const shared = {
   noExternal: [/@dropgate\/core/, /fflate/, /peerjs/],
   external: ['node-datachannel', 'node-datachannel/polyfill'],
   define: {
-    'process.env.DROPGATE_CLI_VERSION': '"3.0.4"',
+    'process.env.DROPGATE_CLI_VERSION': '"3.0.5"',
   },
 };
 
