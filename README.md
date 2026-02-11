@@ -26,8 +26,9 @@ To prevent and monitor for abuse, `DEBUG`-level logging and strict rate limits a
 
 **Dropgate** is a modern, privacy-respecting file sharing system designed to be easy to self-host and easy to use.
 
-It ships as three parts:
+It ships as four parts:
 - [**Dropgate Client**](./client/README.md): A lightweight Electron app for uploading, encrypting, and sharing files.
+- [**Dropgate CLI**](./cli/README.md): A command-line interface for uploading, downloading, and P2P file transfers from the terminal.
 - [**Dropgate Server**](./server/README.md): A Node.js backend that hosts the API + Web UI, with optional end-to-end encryption and configurable storage.
 - [**@dropgate/core**](./packages/dropgate-core/README.md): A headless TypeScript library that powers the client and server, usable in custom projects.
 
@@ -55,6 +56,7 @@ Dropgate was built to make **secure file sharing accessible**, **transparent**, 
 ```
 /Dropgate
 ├── client/    # Electron-based uploader app (GPL-3.0)
+├── cli/       # Command-line interface (GPL-3.0)
 ├── server/    # Node.js server + Web UI (AGPL-3.0)
 ├── packages/
 │   ├── dropgate-core/      # Shared TypeScript library (Apache-2.0)
@@ -74,6 +76,10 @@ cd Dropgate
 ### Client
 
 See the [client README](./client/README.md) for installation, usage, and build instructions.
+
+### CLI
+
+See the [CLI README](./cli/README.md) for installation, commands, and build instructions.
 
 ### Server
 
@@ -105,6 +111,7 @@ If you self-host, you decide how strict you want to be — from private-only to 
 ## 📜 Licenses
 
 * **Client:** GPL-3.0 License – See [`client/LICENSE`](./client/LICENSE)
+* **CLI:** GPL-3.0 License – See [`cli/LICENSE`](./cli/LICENSE)
 * **Server:** AGPL-3.0 License – See [`server/LICENSE`](./server/LICENSE)
 * **Core Library:** Apache-2.0 License – See [`packages/dropgate-core/LICENSE`](./packages/dropgate-core/LICENSE)
 

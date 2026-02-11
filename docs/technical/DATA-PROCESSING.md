@@ -2,7 +2,7 @@
 
 **Last Updated:** February 2026
 
-This document describes what data Dropgate collects, where and why it is stored, how it is processed, and when it is deleted. It covers all three components of the monorepo: the Dropgate Server, the Dropgate Client (Electron), and the `dropgate-core` library (which is also used in the Web UI).
+This document describes what data Dropgate collects, where and why it is stored, how it is processed, and when it is deleted. It covers all four components of the monorepo: the Dropgate Server, the Dropgate Client (Electron), the Dropgate CLI, and the `dropgate-core` library (which is also used in the Web UI).
 
 ---
 
@@ -77,7 +77,24 @@ The following tables enumerate every category of data processed by Dropgate, gro
 | **Window bounds** (x, y, width, height) | Yes | `electron-store` | Restores window position and size between sessions. | On window move/resize. | On application uninstall. |
 | **Debug log** | Yes | `{userData}/debug.log` | Troubleshooting application issues. Contains timestamps, process arguments, app lifecycle events, and upload progress. Does not contain file content or encryption keys. | On application start. | Manual deletion by user. |
 
-### 2.6 Web UI (Browser)
+### 2.6 Dropgate CLI
+
+| Data | Stored? | Where | Why | When Created | When Deleted |
+|------|---------|-------|-----|--------------|--------------|
+| **Server URL** | Yes | JSON config file (platform-specific config directory) | Remembers the user's preferred server between sessions. | On `dropgate config set server`. | On user change, config reset, or file deletion. |
+| **Lifetime preference** | Yes | JSON config file | Remembers the user's default file lifetime. | On `dropgate config set lifetime`. | On user change, config reset, or file deletion. |
+| **Max downloads preference** | Yes | JSON config file | Remembers the user's default download limit. | On `dropgate config set max-downloads`. | On user change, config reset, or file deletion. |
+| **Encryption preference** | Yes | JSON config file | Remembers whether E2EE is enabled by default. | On `dropgate config set encrypt`. | On user change, config reset, or file deletion. |
+
+The CLI stores its configuration in a JSON file at a platform-specific location:
+
+- **Windows:** `%APPDATA%\dropgate-cli\config.json`
+- **macOS:** `~/Library/Application Support/dropgate-cli/config.json`
+- **Linux:** `~/.config/dropgate-cli/config.json`
+
+The CLI does **not** store any file content, encryption keys, transfer history, or usage logs. Downloaded files are written directly to the user's chosen output directory.
+
+### 2.7 Web UI (Browser)
 
 | Data | Stored? | Where | Why | When Created | When Deleted |
 |------|---------|-------|-----|--------------|--------------|
@@ -183,6 +200,7 @@ The server has no access to encryption keys and therefore **cannot**:
 
 - **Electron client settings** (`electron-store`) — persist until the user changes them or uninstalls the application.
 - **Electron debug log** — persists until manually deleted by the user.
+- **CLI configuration** (`config.json`) — persists until the user runs `dropgate config reset` or manually deletes the file.
 - **Server operator logs** (stdout/stderr) — Dropgate has no control over log retention once data is written to the process output streams. This is the operator's responsibility.
 
 ---

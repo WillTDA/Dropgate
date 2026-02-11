@@ -12,6 +12,8 @@ The Dropgate Direct Transfer Protocol (DGDTP) defines the peer-to-peer (P2P) fil
 
 DGDTP supports single-file transfers, multi-file transfers (streamed into a ZIP archive on the receiving end), flow control with chunk-level acknowledgements, connection health monitoring, and resumable sessions.
 
+DGDTP is consumed by the Web UI, the Dropgate CLI (`dropgate send` / `dropgate receive`), and any custom consumer built on `@dropgate/core`.
+
 ### 1.1 Design Goals
 
 - **Zero server storage** — file data never touches the server's filesystem or memory.
