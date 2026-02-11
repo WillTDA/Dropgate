@@ -1373,8 +1373,6 @@ export class DropgateClient {
 
           pendingChunks.push(value);
           pendingLength += value.length;
-          receivedBytes += value.length;
-          if (onBytesReceived) onBytesReceived(receivedBytes);
 
           while (pendingLength >= ENCRYPTED_CHUNK_SIZE) {
             const buffer = flushPending();
@@ -1385,6 +1383,8 @@ export class DropgateClient {
             }
 
             const decryptedBuffer = await decryptChunk(this.cryptoObj, encryptedChunk, cryptoKey);
+            receivedBytes += decryptedBuffer.byteLength;
+            if (onBytesReceived) onBytesReceived(receivedBytes);
             if (onChunk) await onChunk(new Uint8Array(decryptedBuffer));
           }
         }
@@ -1392,6 +1392,8 @@ export class DropgateClient {
         if (pendingLength > 0) {
           const buffer = flushPending();
           const decryptedBuffer = await decryptChunk(this.cryptoObj, buffer, cryptoKey);
+          receivedBytes += decryptedBuffer.byteLength;
+          if (onBytesReceived) onBytesReceived(receivedBytes);
           if (onChunk) await onChunk(new Uint8Array(decryptedBuffer));
         }
       } else {
