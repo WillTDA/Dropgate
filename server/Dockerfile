@@ -10,8 +10,10 @@ COPY package*.json ./
 # Install app dependencies
 RUN npm install
 
-# Copy the rest of the application source code
-COPY . .
+# Copy application source
+COPY server.js ./
+COPY views/ ./views/
+COPY public/ ./public/
 
 # Expose the port the app runs on
 EXPOSE 52443
@@ -25,7 +27,7 @@ RUN apk add --no-cache su-exec && \
     addgroup -S dropgate && adduser -S dropgate -G dropgate && \
     chown -R dropgate:dropgate /usr/src/app
 
-# Entrypoint creates uploads dir at runtime (after volume mount) then drops to dropgate
+# Entrypoint creates uploads dir at runtime then drops to dropgate
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
