@@ -184,8 +184,7 @@ Run the server behind a reverse proxy that terminates TLS:
 ## 🗄️ Storage and Lifecycle
 
 - Uploaded files live in `server/uploads`.
-- Files can be configured to expire automatically.
-- Files are be removed after the first successful download.
+- Files can be set to expire after a certain period or after a certain number of downloads.
 - Incomplete uploads are cleaned up on an interval.
 
 
