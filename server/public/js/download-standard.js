@@ -17,7 +17,7 @@ const card = document.getElementById('status-card');
 const trustStatement = document.getElementById('trust-statement');
 const encryptionStatement = document.getElementById('encryption-statement');
 
-const client = new DropgateClient({ clientVersion: '3.0.6', server: location.origin });
+const client = new DropgateClient({ clientVersion: '3.0.7', server: location.origin });
 
 const downloadState = {
   fileId: null,

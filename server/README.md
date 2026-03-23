@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-3.0.6-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-3.0.7-brightgreen?style=flat-square)
 ![docker](https://img.shields.io/badge/docker-supported-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -53,7 +53,7 @@ This means you can spin it up, try the Web UI, and choose what features you want
 ## 🚀 Quick Start (Manual)
 
 ```bash
-git clone https://github.com/WillTDA/Dropgate.git
+git clone https://github.com/diamonddigitaldev/Dropgate.git
 cd Dropgate/server
 npm install
 npm start
@@ -138,7 +138,7 @@ Example response:
 ```json
 {
   "name": "Dropgate Server",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "logLevel": "INFO",
   "capabilities": {
     "upload": {
@@ -214,8 +214,8 @@ See the [LICENSE](./LICENSE) file for details.
 ## 🙂 Contact Us
 
 * 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)
-* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Dropgate/issues/new?labels=enhancement)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/diamonddigitaldev/Dropgate/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/diamonddigitaldev/Dropgate/issues/new?labels=enhancement)
 
 <div align="center">
   <a href="https://diamonddigital.dev/">
