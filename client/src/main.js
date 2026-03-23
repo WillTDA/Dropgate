@@ -94,7 +94,7 @@ function initAutoUpdater() {
                 autoUpdater.downloadUpdate();
             } else if (result.response === 2) {
                 log('User chose to view changelog');
-                shell.openExternal(`https://github.com/WillTDA/Dropgate/releases/tag/${newVersion}`);
+                shell.openExternal(`https://github.com/diamonddigitaldev/Dropgate/releases/tag/${newVersion}`);
             } else {
                 log('User declined update');
             }
@@ -147,7 +147,7 @@ function checkForUpdatesManually() {
                 buttons: ['OK', 'View Changelog']
             }).then(result => {
                 if (result.response === 1) {
-                    shell.openExternal(`https://github.com/WillTDA/Dropgate/releases/tag/${app.getVersion()}`);
+                    shell.openExternal(`https://github.com/diamonddigitaldev/Dropgate/releases/tag/${app.getVersion()}`);
                 }
             });
         }
@@ -546,7 +546,8 @@ ipcMain.on('open-external', (event, url) => {
     const allowed = [
         'https://github.com/',
         'https://youtube.com/',
-        'https://buymeacoff.ee/'
+        'https://buymeacoff.ee/',
+        'https://diamonddigital.dev'
     ];
 
     if (allowed.some(prefix => url.startsWith(prefix))) {

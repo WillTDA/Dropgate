@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-Mixed-lightgrey?style=flat-square)
-![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Docker-lightgrey?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
 [![buy me a coffee](https://img.shields.io/badge/-Buy%20Me%20a%20Coffee-ffdd00?logo=Buy%20Me%20A%20Coffee&logoColor=000000&style=flat-square)](https://www.buymeacoffee.com/willtda)
@@ -67,7 +67,7 @@ Dropgate was built to make **secure file sharing accessible**, **transparent**, 
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/WillTDA/Dropgate.git
+git clone https://github.com/diamonddigitaldev/Dropgate.git
 cd Dropgate
 ```
 
@@ -119,8 +119,8 @@ If you self-host, you decide how strict you want to be — from private-only to 
 ## 🙂 Contact Us
 
 * 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)
-* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Dropgate/issues/new?labels=enhancement)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/diamonddigitaldev/Dropgate/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/diamonddigitaldev/Dropgate/issues/new?labels=enhancement)
 
 
 <div align="center">

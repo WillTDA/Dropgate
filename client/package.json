@@ -1,6 +1,6 @@
 {
   "name": "dropgate-client",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "description": "A self-hosted, privacy-first file sharing system with both hosted upload and direct P2P transfer capabilities.",
   "main": "src/main.js",
   "funding": {
@@ -13,7 +13,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/WillTDA/Dropgate"
+    "url": "https://github.com/diamonddigitaldev/Dropgate"
   },
   "build": {
     "appId": "com.diamonddigitaldev.dropgateclient",
@@ -43,6 +43,7 @@
     "nsis": {
       "perMachine": true,
       "createDesktopShortcut": true,
+      "menuCategory": "Diamond Digital Development",
       "include": "installer.nsh"
     },
     "mac": {

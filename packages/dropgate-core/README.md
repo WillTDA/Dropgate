@@ -9,7 +9,7 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-3.0.6-brightgreen?style=flat-square)
+![version](https://img.shields.io/badge/version-3.0.7-brightgreen?style=flat-square)
 ![typescript](https://img.shields.io/badge/TypeScript-5.0+-blue?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord&logoColor=white&style=flat-square)](https://diamonddigital.dev/discord)
@@ -55,7 +55,7 @@ All operations go through a single `DropgateClient` instance. Server connection 
 import { DropgateClient } from '@dropgate/core';
 
 const client = new DropgateClient({
-  clientVersion: '3.0.6',
+  clientVersion: '3.0.7',
   server: 'https://dropgate.link', // URL string or { host, port?, secure? }
   fallbackToHttp: true,             // auto-retry HTTP if HTTPS fails (optional)
 });
@@ -422,7 +422,7 @@ For browser environments, you can use the IIFE bundle:
 <script src="/path/to/dropgate-core.browser.js"></script>
 <script>
   const { DropgateClient } = DropgateCore;
-  const client = new DropgateClient({ clientVersion: '3.0.6', server: location.origin });
+  const client = new DropgateClient({ clientVersion: '3.0.7', server: location.origin });
   // ...
 </script>
 ```
@@ -432,7 +432,7 @@ Or as an ES module:
 ```html
 <script type="module">
   import { DropgateClient } from '/path/to/dropgate-core.js';
-  const client = new DropgateClient({ clientVersion: '3.0.6', server: location.origin });
+  const client = new DropgateClient({ clientVersion: '3.0.7', server: location.origin });
   // ...
 </script>
 ```
@@ -471,8 +471,8 @@ See the [LICENSE](./LICENSE) file for details.
 ## Contact Us
 
 * **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)
-* **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Dropgate/issues/new?labels=enhancement)
+* **Found a bug?** [Open an issue](https://github.com/diamonddigitaldev/Dropgate/issues)
+* **Have a suggestion?** [Submit a feature request](https://github.com/diamonddigitaldev/Dropgate/issues/new?labels=enhancement)
 
 <div align="center">
   <a href="https://diamonddigital.dev/">

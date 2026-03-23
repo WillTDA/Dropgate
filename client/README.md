@@ -9,8 +9,8 @@
 <div align="center">
 
 ![license](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)
-![version](https://img.shields.io/badge/version-3.0.6-brightgreen?style=flat-square)
-![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
+![version](https://img.shields.io/badge/version-3.0.7-brightgreen?style=flat-square)
+![platform](https://img.shields.io/badge/platform-Windows-lightgrey?style=flat-square)
 
 [![discord](https://img.shields.io/discord/667479986214666272?logo=discord\&logoColor=white\&style=flat-square)](https://diamonddigital.dev/discord)
 [![buy me a coffee](https://img.shields.io/badge/-Buy%20Me%20a%20Coffee-ffdd00?logo=Buy%20Me%20A%20Coffee\&logoColor=000000\&style=flat-square)](https://www.buymeacoffee.com/willtda)
@@ -47,7 +47,7 @@ It’s built to feel simple: pick a file, choose your options, hit upload, and s
 
 To install Dropgate Client:
 
-1. Download the latest release for your OS from the [releases page](https://github.com/WillTDA/Dropgate/releases).
+1. Download the latest release for your OS from the [releases page](https://github.com/diamonddigitaldev/Dropgate/releases).
 2. Extract or install the app as you would any other desktop app.
 3. Launch the client and connect to your preferred server.
 
@@ -82,7 +82,7 @@ If your server has **Direct Transfer (P2P)** enabled, you can use it from the se
 To set up a development environment:
 
 ```bash
-git clone https://github.com/WillTDA/Dropgate.git
+git clone https://github.com/diamonddigitaldev/Dropgate.git
 cd Dropgate/client
 npm install
 npm start
@@ -127,8 +127,8 @@ See the [LICENSE](./LICENSE) file for details.
 ## 🙂 Contact Us
 
 * 💬 **Need help or want to chat?** [Join our Discord Server](https://diamonddigital.dev/discord)
-* 🐛 **Found a bug?** [Open an issue](https://github.com/WillTDA/Dropgate/issues)
-* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/WillTDA/Dropgate/issues/new?labels=enhancement)
+* 🐛 **Found a bug?** [Open an issue](https://github.com/diamonddigitaldev/Dropgate/issues)
+* 💡 **Have a suggestion?** [Submit a feature request](https://github.com/diamonddigitaldev/Dropgate/issues/new?labels=enhancement)
 
 
 <div align="center">

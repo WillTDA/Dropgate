@@ -1,6 +1,6 @@
 {
   "name": "@dropgate/core",
-  "version": "3.0.6",
+  "version": "3.0.7",
   "description": "Headless Dropgate client library for file uploads and P2P transfers.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -74,7 +74,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/WillTDA/Dropgate.git",
+    "url": "https://github.com/diamonddigitaldev/Dropgate.git",
     "directory": "packages/dropgate-core"
   },
   "keywords": [
